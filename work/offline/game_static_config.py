@@ -282,6 +282,7 @@ class GameStaticConfig:
                 "skillType": skill_type,
                 "pos": pos,
                 "lvl": lvl,
+                "skillIds": _array_ints(_named_block(block, "skillId")),
                 "needSkillPoint": max(0, _int_field(block, "needSkillPiont")),
                 "needHeroLvl": max(0, _int_field(block, "needHeroLvl")),
                 "needAngelLvl": max(0, _int_field(block, "needAngelLvl")),
@@ -295,6 +296,12 @@ class GameStaticConfig:
     def angel_skill_by_id(self, node_id: int) -> dict[str, Any] | None:
         for node in self._angel_skill_index().values():
             if int(node["id"]) == int(node_id):
+                return node
+        return None
+
+    def angel_skill_for_passive(self, hero_cid: int, skill_id: int) -> dict[str, Any] | None:
+        for node in self._angel_skill_index().values():
+            if int(node["heroId"]) == int(hero_cid) and int(node["skillType"]) == 10 and int(skill_id) in node["skillIds"]:
                 return node
         return None
 
@@ -330,6 +337,21 @@ class GameStaticConfig:
         if row is None:
             return None
         return list(row["cost2" if int(cost_type) == 2 else "cost1"])
+
+    def angel_break_stage(self, hero_cid: int, break_level: int) -> dict[str, Any] | None:
+        hero = self.hero(hero_cid)
+        level_id = int((hero or {}).get("angelLevelId", 0))
+        if level_id <= 0:
+            return None
+        block = self.block("AngelBreakthrough", level_id * 1000 + int(break_level))
+        if not block:
+            return None
+        reward = _named_block(block, "BreakReward")
+        return {
+            "level": max(0, _int_field(block, "AngelLevel")),
+            "costOptions": _array_pairs(_named_block(block, "BreakCost")),
+            "reward": _map_costs(reward),
+        }
 
     def dungeon_definition(self, level_cid: int) -> dict[str, Any] | None:
         block = self.block("DungeonLevel", level_cid)
