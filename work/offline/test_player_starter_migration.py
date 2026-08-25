@@ -11,13 +11,15 @@ from protocol_schema import decode_fields, registry
 class StarterSaveMigrationTests(unittest.TestCase):
     def test_new_save_is_playable(self) -> None:
         state = player_save.default_save()
-        self.assertEqual(state["schemaVersion"], 3)
+        self.assertEqual(state["schemaVersion"], 4)
         self.assertEqual(len(state["heroes"]), 1)
         hero = state["heroes"][0]
         self.assertEqual(hero["id"], player_save.STARTER_HERO_SID)
         self.assertEqual(hero["cid"], player_save.STARTER_HERO_CID)
         self.assertEqual(hero["skinCid"], player_save.STARTER_HERO_SKIN)
         self.assertEqual(hero["quality"], player_save.STARTER_HERO_QUALITY)
+        self.assertEqual(hero["angelLvl"], 1)
+        self.assertEqual(hero["skillStrategyInfo"][0]["id"], 1)
         self.assertEqual(state["formations"][0]["stance"], [player_save.STARTER_HERO_SID])
         self.assertEqual(state["helpFightHeroCid"], player_save.STARTER_HERO_CID)
 
@@ -33,22 +35,53 @@ class StarterSaveMigrationTests(unittest.TestCase):
             ],
             "items": {},
         })
-        self.assertEqual(state["schemaVersion"], 3)
+        self.assertEqual(state["schemaVersion"], 4)
         self.assertEqual([hero["cid"] for hero in state["heroes"]], [player_save.STARTER_HERO_CID])
+        self.assertEqual(state["heroes"][0]["angelLvl"], 1)
         self.assertEqual(state["formations"][0]["stance"], [player_save.STARTER_HERO_SID])
 
         again = player_save.normalize_save(state)
         self.assertEqual(again["heroes"], state["heroes"])
         self.assertEqual(again["formations"], state["formations"])
 
-    def test_v3_intentionally_empty_roster_stays_empty(self) -> None:
+    def test_v3_hero_gets_angel_baseline_without_replacing_roster(self) -> None:
         state = player_save.normalize_save({
             "schemaVersion": 3,
+            "heroes": [{"id": "custom-hero", "cid": 110102, "lvl": 7, "quality": 5, "angelLvl": 0,
+                        "skillStrategyInfo": []}],
+            "formations": [{"ct": 0, "type": 1, "status": 1, "stance": ["custom-hero"]}],
+            "items": {},
+        })
+        self.assertEqual(state["schemaVersion"], 4)
+        self.assertEqual(len(state["heroes"]), 1)
+        self.assertEqual(state["heroes"][0]["id"], "custom-hero")
+        self.assertEqual(state["heroes"][0]["angelLvl"], 1)
+        self.assertEqual(state["heroes"][0]["skillStrategyInfo"][0]["id"], 1)
+        self.assertEqual(state["formations"][0]["stance"], ["custom-hero"])
+
+    def test_v4_intentionally_empty_roster_stays_empty(self) -> None:
+        state = player_save.normalize_save({
+            "schemaVersion": 4,
             "heroes": [],
             "formations": [],
             "items": {},
         })
         self.assertEqual(state["heroes"], [])
+        self.assertEqual(state["formations"][0]["stance"], [])
+
+    def test_v4_state_is_not_rewritten_by_migration_rules(self) -> None:
+        state = player_save.normalize_save({
+            "schemaVersion": 4,
+            "heroes": [{"id": "custom-hero", "cid": 110102, "lvl": 7, "quality": 5,
+                        "angelLvl": 3, "skillStrategyInfo": [{"id": 2, "name": "Mine"}],
+                        "useSkillStrategy": 2}],
+            "formations": [],
+            "items": {},
+        })
+        hero = state["heroes"][0]
+        self.assertEqual(hero["angelLvl"], 3)
+        self.assertEqual(hero["skillStrategyInfo"], [{"id": 2, "name": "Mine"}])
+        self.assertEqual(hero["useSkillStrategy"], 2)
         self.assertEqual(state["formations"][0]["stance"], [])
 
     def test_existing_roster_is_never_replaced(self) -> None:
@@ -76,6 +109,7 @@ class StarterSaveMigrationTests(unittest.TestCase):
         self.assertEqual(hero["lvl"], 1)
         self.assertEqual(hero["quality"], player_save.STARTER_HERO_QUALITY)
         self.assertEqual(hero["skinCid"], player_save.STARTER_HERO_SKIN)
+        self.assertEqual(hero["angelLvl"], 1)
 
 
 if __name__ == "__main__":
