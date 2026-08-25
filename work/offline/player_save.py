@@ -1,19 +1,45 @@
 #!/usr/bin/env python3
-"""Local persistent player save for Date A Live: Spirit Echo (research)."""
+"""Local persistent player state for the offline preservation server."""
 from __future__ import annotations
 
 import json
 import os
 import time
 from copy import deepcopy
+from typing import Any
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SAVE_PATH = os.path.join(ROOT, "saves", "player.json")
+SCHEMA_VERSION = 2
+FIRST_PLOT_LEVEL = 101101
+GOLD_CID = 500001
+DIAMOND_CID = 500002
+FRIENDSHIP_CID = 500003
+POWER_CID = 500004
+STARTER_RESOURCES = {GOLD_CID: 1_000_000, DIAMOND_CID: 10_000, FRIENDSHIP_CID: 10_000, POWER_CID: 999}
 
 
-def default_save() -> dict:
+def resource_item(cid: int, num: int, ct: int = 0) -> dict[str, Any]:
+    cid = int(cid)
+    return {"ct": int(ct), "id": str(cid), "cid": cid, "num": max(0, int(num)), "outTime": 0}
+
+
+def default_resource_items() -> dict[str, dict[str, Any]]:
+    return {str(cid): resource_item(cid, num) for cid, num in STARTER_RESOURCES.items()}
+
+
+def default_formations() -> list[dict[str, Any]]:
+    return [
+        {"ct": 0, "type": 1, "status": 1, "stance": []},
+        {"ct": 0, "type": 2, "status": 1, "stance": []},
+        {"ct": 0, "type": 3, "status": 1, "stance": []},
+    ]
+
+
+def default_save() -> dict[str, Any]:
     now = int(time.time())
     return {
+        "schemaVersion": SCHEMA_VERSION,
         "pid": 10001,
         "name": "Shido",
         "lvl": 1,
@@ -42,33 +68,131 @@ def default_save() -> dict:
         "hasRole": True,
         "account": "offline",
         "password": "",
-        "items": {},
+        "items": default_resource_items(),
         "heroes": [],
-        "gold": 0,
-        "diamonds": 0,
+        "formations": default_formations(),
+        "passedLevels": [FIRST_PLOT_LEVEL],
+        "mails": [],
+        "tasks": [],
+        "friends": [],
+        "storePurchases": {},
+        "gold": STARTER_RESOURCES[GOLD_CID],
+        "diamonds": STARTER_RESOURCES[DIAMOND_CID],
         "updated": now,
     }
 
 
-def load_save() -> dict:
-    if not os.path.isfile(SAVE_PATH):
-        s = default_save()
-        save(s)
-        return s
-    with open(SAVE_PATH, encoding="utf-8") as f:
-        data = json.load(f)
+def _normalize_items(data: dict[str, Any], base_items: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    raw = data.get("items")
+    result: dict[str, dict[str, Any]] = {}
+    if isinstance(raw, dict):
+        for raw_id, value in raw.items():
+            if isinstance(value, dict):
+                item = deepcopy(value)
+                cid = int(item.get("cid", raw_id))
+                item.setdefault("ct", 0)
+                item.setdefault("id", str(raw_id))
+                item["cid"] = cid
+                item["num"] = max(0, int(item.get("num", item.get("count", 0))))
+                item.setdefault("outTime", 0)
+                result[str(item["id"])] = item
+            elif isinstance(value, (int, float)):
+                cid = int(raw_id)
+                result[str(cid)] = resource_item(cid, int(value))
+    elif isinstance(raw, list):
+        for value in raw:
+            if not isinstance(value, dict) or "cid" not in value:
+                continue
+            item = deepcopy(value)
+            cid = int(item["cid"])
+            item.setdefault("ct", 0)
+            item.setdefault("id", str(cid))
+            item["num"] = max(0, int(item.get("num", item.get("count", 0))))
+            item.setdefault("outTime", 0)
+            result[str(item["id"])] = item
+    legacy = {GOLD_CID: data.get("gold"), DIAMOND_CID: data.get("diamonds")}
+    for cid, default_item in base_items.items():
+        if cid in result:
+            continue
+        numeric_cid = int(cid)
+        legacy_value = legacy.get(numeric_cid)
+        item = deepcopy(default_item)
+        if isinstance(legacy_value, (int, float)) and int(legacy_value) > 0:
+            item["num"] = int(legacy_value)
+        result[cid] = item
+    return result
+
+
+def _normalize_formations(value: Any) -> list[dict[str, Any]]:
+    by_type: dict[int, dict[str, Any]] = {}
+    if isinstance(value, list):
+        for formation in value:
+            if not isinstance(formation, dict):
+                continue
+            ftype = int(formation.get("type", 0))
+            if ftype not in (1, 2, 3):
+                continue
+            clean = deepcopy(formation)
+            clean["ct"] = int(clean.get("ct", 0))
+            clean["status"] = int(clean.get("status", 1))
+            clean["stance"] = [str(v) for v in clean.get("stance", []) if str(v)]
+            by_type[ftype] = clean
+    for default in default_formations():
+        by_type.setdefault(default["type"], deepcopy(default))
+    return [by_type[k] for k in (1, 2, 3)]
+
+
+def normalize_save(data: dict[str, Any] | None) -> dict[str, Any]:
+    incoming = deepcopy(data) if isinstance(data, dict) else {}
     base = default_save()
-    base.update(data)
+    base.update(incoming)
+    base["schemaVersion"] = SCHEMA_VERSION
+    base["items"] = _normalize_items(incoming, default_resource_items())
+    heroes = incoming.get("heroes", base.get("heroes", []))
+    base["heroes"] = [deepcopy(v) for v in heroes if isinstance(v, dict)] if isinstance(heroes, list) else []
+    base["formations"] = _normalize_formations(incoming.get("formations"))
+    passed = incoming.get("passedLevels")
+    clean_passed: list[int] = []
+    if isinstance(passed, list):
+        for value in passed:
+            try:
+                cid = int(value)
+            except (TypeError, ValueError):
+                continue
+            if cid > 0 and cid not in clean_passed:
+                clean_passed.append(cid)
+    if FIRST_PLOT_LEVEL not in clean_passed:
+        clean_passed.insert(0, FIRST_PLOT_LEVEL)
+    base["passedLevels"] = clean_passed
+    for key in ("mails", "tasks", "friends"):
+        value = incoming.get(key, base.get(key, []))
+        base[key] = [deepcopy(v) for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+    by_cid = {int(v.get("cid", 0)): v for v in base["items"].values()}
+    base["gold"] = int(by_cid.get(GOLD_CID, {}).get("num", 0))
+    base["diamonds"] = int(by_cid.get(DIAMOND_CID, {}).get("num", 0))
     return base
 
 
-def save(data: dict) -> None:
+def load_save() -> dict[str, Any]:
+    if not os.path.isfile(SAVE_PATH):
+        state = default_save()
+        save(state)
+        return state
+    with open(SAVE_PATH, encoding="utf-8") as f:
+        data = json.load(f)
+    state = normalize_save(data)
+    if state != data:
+        save(state)
+    return state
+
+
+def save(data: dict[str, Any]) -> None:
     os.makedirs(os.path.dirname(SAVE_PATH), exist_ok=True)
-    data = deepcopy(data)
-    data["updated"] = int(time.time())
+    state = normalize_save(data)
+    state["updated"] = int(time.time())
     tmp = SAVE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(state, f, ensure_ascii=False, indent=2)
     os.replace(tmp, SAVE_PATH)
 
 
