@@ -18,6 +18,7 @@ HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT = 8406
 HERO_SPIRIT_REQ_NEW_SPIRIT_INFO = 8407
 HERO_REQ_USE_SKILL_STRATEGY = 1040
 FRIEND_REQ_OPERATE = 3074
+ANGEL_STRATEGY_IDS = frozenset({1, 2, 3, 4})  # AngelSkillPage.lua in client 1.37
 
 # Client EnumConfig.lua values.
 FRIEND = 1
@@ -111,6 +112,39 @@ def _find_hero_by_sid(state: dict[str, Any], sid: Any) -> dict[str, Any] | None:
     return None
 
 
+def _strategy_page(hero: dict[str, Any], strategy_id: int) -> tuple[dict[str, Any] | None, bool]:
+    """Return/create one of the four pages shipped in AngelSkillPage.lua."""
+    if strategy_id not in ANGEL_STRATEGY_IDS:
+        return None, False
+    raw = hero.get("skillStrategyInfo")
+    if not isinstance(raw, list):
+        hero["skillStrategyInfo"] = raw = []
+    for row in raw:
+        if isinstance(row, dict) and _as_int(row.get("id")) == strategy_id:
+            changed = False
+            defaults = {
+                "name": "Default" if strategy_id == 1 else f"Strategy {strategy_id}",
+                "alreadyUseSkillPiont": 0,
+                "angeSkillInfos": [],
+                "passiveSkillInfo": [],
+            }
+            for key, value in defaults.items():
+                if key not in row:
+                    row[key] = deepcopy(value)
+                    changed = True
+            return row, changed
+    row = {
+        "id": strategy_id,
+        "name": "Default" if strategy_id == 1 else f"Strategy {strategy_id}",
+        "alreadyUseSkillPiont": 0,
+        "angeSkillInfos": [],
+        "passiveSkillInfo": [],
+    }
+    raw.append(row)
+    raw.sort(key=lambda value: _as_int(value.get("id")) if isinstance(value, dict) else 999)
+    return row, True
+
+
 def _friend_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
     raw = state.get("friends", [])
     if not isinstance(raw, list):
@@ -171,9 +205,6 @@ def _operate_friend(state: dict[str, Any], operation: int, targets: list[int]) -
                 rows.pop(index)
                 changed = True
         elif operation == APPLY_FRIEND:
-            # Offline mode has no remote peer to accept the request. Preserve
-            # an existing recommendation as a local outgoing request only;
-            # never synthesize a fake player row without profile data.
             if row is not None and _as_int(row.get("status")) == ADD:
                 row["status"] = APPLY
                 changed = True
@@ -256,13 +287,18 @@ def response_for(proto: int, state: dict[str, Any], body: bytes = b"") -> tuple[
     if proto == HERO_REQ_USE_SKILL_STRATEGY:
         request = decode_request(proto, body)
         hero_id = str(request.get("heroId", ""))
-        strategy_id = _as_int(request.get("skillStrategyId"))
+        requested_id = _as_int(request.get("skillStrategyId"))
         hero = _find_hero_by_sid(state, hero_id)
         changed = False
-        if hero is not None and strategy_id > 0 and _as_int(hero.get("useSkillStrategy"), 1) != strategy_id:
-            hero["useSkillStrategy"] = strategy_id
-            changed = True
-        return encode_response(proto, {"heroId": hero_id, "skillStrategyId": strategy_id}), changed
+        effective_id = _as_int((hero or {}).get("useSkillStrategy"), 1)
+        if hero is not None and requested_id in ANGEL_STRATEGY_IDS:
+            _, page_changed = _strategy_page(hero, requested_id)
+            if _as_int(hero.get("useSkillStrategy"), 1) != requested_id:
+                hero["useSkillStrategy"] = requested_id
+                changed = True
+            changed = changed or page_changed
+            effective_id = requested_id
+        return encode_response(proto, {"heroId": hero_id, "skillStrategyId": effective_id}), changed
 
     if proto == FRIEND_REQ_OPERATE:
         request = decode_request(proto, body)
