@@ -3,8 +3,8 @@
 
 The stack is now just three pieces - no Frida, no TLS front, no APK rebuild:
 
-  1. work/tools/hotpatch.py  drops patched lua into the game's TFDebug search
-     path (account URLs -> this machine, packet cipher off, logging on).
+  1. work/tools/hotpatch_main_scene.py drops the existing offline lua patches
+     plus zero-state MainScene guards into the game's TFDebug search path.
   2. http_server.py :18099   account/getServerInfo, /login, /querydate, notices.
   3. tcp_server.py  :18100   the game server itself.
 
@@ -101,7 +101,7 @@ def main() -> int:
         return 1
 
     print("[2/4] hot-patching lua")
-    r = subprocess.run([sys.executable, os.path.join(REPO, "work", "tools", "hotpatch.py"),
+    r = subprocess.run([sys.executable, os.path.join(REPO, "work", "tools", "hotpatch_main_scene.py"),
                         "apply"], cwd=REPO, capture_output=True, text=True,
                        env=dict(os.environ, DAL_CIPHER_MODE=os.environ.get(
                            "DAL_CIPHER_MODE", "plainsend")))
