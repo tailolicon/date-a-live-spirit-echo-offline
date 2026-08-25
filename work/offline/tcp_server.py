@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_save import load_save, save as persist
 from proto_codec import enc_bool_field, enc_msg_field, enc_string_field, enc_varint_field
 import proto_gen
+import angel_handlers
 import combat_handlers
 import formation_backup_handlers
 import hero_progression_handlers
@@ -196,6 +197,12 @@ class Client(threading.Thread):
         except Exception as exc:
             log(f"!! hero-progression {_name(proto, 'c2s')} failed: {exc!r}")
         try:
+            if angel_handlers.dispatch(self, proto, body):
+                log(f"   angel handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! angel {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if progression_handlers.dispatch(self, proto, body):
                 log(f"   progression handled {_name(proto, 'c2s')}")
                 return
@@ -275,6 +282,7 @@ def main() -> None:
         + len(combat_handlers.COMBAT_PROTOCOLS)
         + len(formation_backup_handlers.FORMATION_BACKUP_PROTOCOLS)
         + len(hero_progression_handlers.HERO_PROGRESSION_PROTOCOLS)
+        + len(angel_handlers.ANGEL_PROTOCOLS)
         + len(progression_handlers.PROGRESSION_PROTOCOLS)
         + len(sign_handlers.SIGN_PROTOCOLS)
     )
