@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Hot-patch the offline client with MainScene zero-state guards.
 
-The generic protobuf server deliberately omits empty repeated fields.  This
+The generic protobuf server deliberately omits empty repeated fields. This
 client's custom Lua decoder leaves those fields as ``nil`` rather than ``{}``,
-while several login handlers call pairs()/ipairs() unconditionally.  The
-result is a burst of Lua exceptions immediately before MainScene.
+while several login handlers call pairs()/ipairs() unconditionally. The result
+is a burst of Lua exceptions immediately before MainScene.
 
 This wrapper keeps every existing patch from hotpatch.py and adds only the
 small compatibility layer required by the zero-filled offline responses.
@@ -87,6 +87,23 @@ if not os.path.isfile(base.APK):
     fallback = os.path.join(base.REPO, "work", "apk", "base-offline.apk")
     if os.path.isfile(fallback):
         base.APK = fallback
+
+
+# MuMu normally exposes root through `su`, while debug Android Emulator system
+# images can expose an already-root adb shell with no `su` binary. Keep the
+# original path for MuMu but run commands directly when adbd itself is root.
+_base_sh = base.sh
+
+
+def _portable_device_sh(cmd: str) -> str:
+    uid = base.adb("shell", "id", "-u")
+    if uid.returncode == 0 and (uid.stdout or "").strip() == "0":
+        r = base.adb("shell", cmd)
+        return (r.stdout or "") + (r.stderr or "")
+    return _base_sh(cmd)
+
+
+base.sh = _portable_device_sh
 
 
 def main() -> int:
