@@ -29,10 +29,12 @@ def encode_dungeon_level_info(save: dict) -> bytes:
           1 cid, 2 goals(packed, optional), 3 fightCount, 4 win,
           5 buyCount, 6 freeCount
       field 2 groups (optional for the MainScene bootstrap)
+
+    Until proto 1808 has a real tutorial implementation, an explicitly empty
+    passedLevels list also keeps 101101 passed so the client cannot fall back
+    into the known black-screen tutorial path.
     """
-    passed = save.get("passedLevels")
-    if passed is None:
-        passed = [FIRST_PLOT_LEVEL]
+    passed = save.get("passedLevels") or [FIRST_PLOT_LEVEL]
 
     records = b""
     for raw_cid in passed:
@@ -48,7 +50,8 @@ def encode_dungeon_level_info(save: dict) -> bytes:
         records += enc_msg_field(1, info)
 
     if not records:
-        return b""
+        # All supplied values were invalid; preserve the fail-safe bootstrap.
+        return encode_dungeon_level_info({})
     level_infos = enc_msg_field(1, records)
     return enc_msg_field(1, level_infos)
 
@@ -58,7 +61,7 @@ def _handle(self: base.Client, proto: int, body: bytes) -> None:
         payload = encode_dungeon_level_info(self.save)
         base.log(
             f"   bootstrap dungeon progress: passed="
-            f"{self.save.get('passedLevels', [FIRST_PLOT_LEVEL])}"
+            f"{self.save.get('passedLevels') or [FIRST_PLOT_LEVEL]}"
         )
         self.send_pkt(proto, payload)
         return
