@@ -10,7 +10,7 @@ from typing import Any
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SAVE_PATH = os.path.join(ROOT, "saves", "player.json")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 FIRST_PLOT_LEVEL = 101101
 GOLD_CID = 500001
 DIAMOND_CID = 500002
@@ -32,6 +32,16 @@ def default_resource_items() -> dict[str, dict[str, Any]]:
     return {str(cid): resource_item(cid, num) for cid, num in STARTER_RESOURCES.items()}
 
 
+def default_skill_strategy() -> dict[str, Any]:
+    return {
+        "id": 1,
+        "name": "Default",
+        "alreadyUseSkillPiont": 0,
+        "angeSkillInfos": [],
+        "passiveSkillInfo": [],
+    }
+
+
 def starter_hero() -> dict[str, Any]:
     """Minimal complete HeroInfo for the bundled Tohka starter (cid 110101)."""
     return {
@@ -44,20 +54,16 @@ def starter_hero() -> dict[str, Any]:
         "advancedLvl": 0,
         "equipments": [],
         "helpFight": False,
-        "angelLvl": 0,
+        # HeroDataMgr:getAngelLevel() uses `angelLvl or 1`; Lua considers 0
+        # truthy, so sending zero locks nodes that require the baseline Lv.1.
+        "angelLvl": 1,
         "angeSkillInfos": [],
         "useSkillPiont": 0,
         "quality": STARTER_HERO_QUALITY,
         "provide": 0,
         "fightPower": 0,
         "skinCid": STARTER_HERO_SKIN,
-        "skillStrategyInfo": [{
-            "id": 1,
-            "name": "Default",
-            "alreadyUseSkillPiont": 0,
-            "angeSkillInfos": [],
-            "passiveSkillInfo": [],
-        }],
+        "skillStrategyInfo": [default_skill_strategy()],
         "useSkillStrategy": 1,
         "crystalInfo": [],
         "equipSkillIds": [],
@@ -167,7 +173,7 @@ def _normalize_items(data: dict[str, Any], base_items: dict[str, dict[str, Any]]
     return result
 
 
-def _normalize_heroes(value: Any, *, migrate_empty: bool) -> list[dict[str, Any]]:
+def _normalize_heroes(value: Any, *, migrate_empty: bool, migrate_angel: bool) -> list[dict[str, Any]]:
     result = [deepcopy(v) for v in value if isinstance(v, dict)] if isinstance(value, list) else []
     seen: set[str] = set()
     clean: list[dict[str, Any]] = []
@@ -187,8 +193,19 @@ def _normalize_heroes(value: Any, *, migrate_empty: bool) -> list[dict[str, Any]
         hero["advancedLvl"] = max(0, int(hero.get("advancedLvl", 0) or 0))
         hero["quality"] = max(1, int(hero.get("quality", 1) or 1))
         hero.setdefault("skinCid", 0)
-        hero.setdefault("skillStrategyInfo", [])
-        hero.setdefault("useSkillStrategy", 1)
+        hero.setdefault("attr", [])
+        hero.setdefault("equipments", [])
+        hero.setdefault("angelStrengthen", [])
+        if migrate_angel and int(hero.get("angelLvl", 0) or 0) <= 0:
+            hero["angelLvl"] = 1
+        else:
+            hero["angelLvl"] = max(0, int(hero.get("angelLvl", 1) or 0))
+        strategies = hero.get("skillStrategyInfo")
+        if migrate_angel and (not isinstance(strategies, list) or not any(isinstance(v, dict) for v in strategies)):
+            hero["skillStrategyInfo"] = [default_skill_strategy()]
+        elif not isinstance(strategies, list):
+            hero["skillStrategyInfo"] = []
+        hero["useSkillStrategy"] = max(1, int(hero.get("useSkillStrategy", 1) or 1))
         seen.add(sid)
         clean.append(hero)
     if not clean and migrate_empty:
@@ -227,6 +244,7 @@ def normalize_save(data: dict[str, Any] | None) -> dict[str, Any]:
     except (TypeError, ValueError):
         previous_schema = 0
     migrating_v3 = previous_schema < 3
+    migrating_v4 = previous_schema < 4
 
     base = default_save()
     base.update(incoming)
@@ -234,7 +252,9 @@ def normalize_save(data: dict[str, Any] | None) -> dict[str, Any]:
     base["items"] = _normalize_items(incoming, default_resource_items())
 
     raw_heroes = incoming.get("heroes", base.get("heroes", []))
-    base["heroes"] = _normalize_heroes(raw_heroes, migrate_empty=migrating_v3)
+    base["heroes"] = _normalize_heroes(
+        raw_heroes, migrate_empty=migrating_v3, migrate_angel=migrating_v4
+    )
     starter_sid = str(base["heroes"][0].get("id", "")) if base["heroes"] else ""
     base["formations"] = _normalize_formations(
         incoming.get("formations"), starter_sid=starter_sid, migrate_empty=migrating_v3
