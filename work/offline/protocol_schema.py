@@ -73,7 +73,8 @@ def _parse_fields(type_exprs: list[str], name_exprs: list[str]) -> tuple[FieldSp
 
 
 def load_schemas(path: str) -> dict[int, tuple[FieldSpec, ...]]:
-    src = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        src = handle.read()
     out: dict[int, tuple[FieldSpec, ...]] = {}
     for m in re.finditer(r"\[(\d+)\]\s*=\s*function\(\)\s*return\s*\{", src):
         proto = int(m.group(1))
@@ -86,7 +87,8 @@ def load_schemas(path: str) -> dict[int, tuple[FieldSpec, ...]]:
 
 
 def load_codes(path: str, table_name: str) -> tuple[dict[str, int], dict[int, str]]:
-    src = open(path, encoding="utf-8", errors="replace").read()
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        src = handle.read()
     by_name: dict[str, int] = {}
     by_id: dict[int, str] = {}
     pattern = rf"\b{re.escape(table_name)}\.([A-Z0-9_]+)\s*=\s*(\d+)"
