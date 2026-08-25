@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from player_save import load_save, save as persist
 from proto_codec import enc_bool_field, enc_msg_field, enc_string_field, enc_varint_field
 import proto_gen
+import combat_handlers
 import stateful_handlers
 
 try:
@@ -173,6 +174,12 @@ class Client(threading.Thread):
             self.send_pkt(LOGIN_SERVER_TIME, enc_varint_field(1, int(time.time())))
             return
         try:
+            if combat_handlers.dispatch(self, proto, body):
+                log(f"   combat handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! combat {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if stateful_handlers.dispatch(self, proto, body):
                 log(f"   stateful handled {_name(proto, 'c2s')}")
                 return
@@ -235,7 +242,8 @@ def main() -> None:
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", PORT))
     srv.listen(8)
-    log(f"game TCP :{PORT} (plain wire, head token {HEAD_TOKEN:#06x}, stateful={len(stateful_handlers.STATEFUL_PROTOCOLS)})")
+    handled = len(stateful_handlers.STATEFUL_PROTOCOLS) + len(combat_handlers.COMBAT_PROTOCOLS)
+    log(f"game TCP :{PORT} (plain wire, head token {HEAD_TOKEN:#06x}, stateful={handled})")
     while True:
         sock, addr = srv.accept()
         Client(sock, addr).start()
