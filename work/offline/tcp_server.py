@@ -14,6 +14,7 @@ from player_save import load_save, save as persist
 from proto_codec import enc_bool_field, enc_msg_field, enc_string_field, enc_varint_field
 import proto_gen
 import combat_handlers
+import formation_backup_handlers
 import progression_handlers
 import stateful_handlers
 
@@ -181,6 +182,12 @@ class Client(threading.Thread):
         except Exception as exc:
             log(f"!! combat {_name(proto, 'c2s')} failed: {exc!r}")
         try:
+            if formation_backup_handlers.dispatch(self, proto, body):
+                log(f"   formation-backup handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! formation-backup {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if progression_handlers.dispatch(self, proto, body):
                 log(f"   progression handled {_name(proto, 'c2s')}")
                 return
@@ -252,6 +259,7 @@ def main() -> None:
     handled = (
         len(stateful_handlers.STATEFUL_PROTOCOLS)
         + len(combat_handlers.COMBAT_PROTOCOLS)
+        + len(formation_backup_handlers.FORMATION_BACKUP_PROTOCOLS)
         + len(progression_handlers.PROGRESSION_PROTOCOLS)
     )
     log(f"game TCP :{PORT} (plain wire, head token {HEAD_TOKEN:#06x}, stateful={handled})")
