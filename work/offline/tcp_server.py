@@ -16,6 +16,7 @@ import proto_gen
 import combat_handlers
 import formation_backup_handlers
 import progression_handlers
+import sign_handlers
 import stateful_handlers
 
 try:
@@ -194,6 +195,12 @@ class Client(threading.Thread):
         except Exception as exc:
             log(f"!! progression {_name(proto, 'c2s')} failed: {exc!r}")
         try:
+            if sign_handlers.dispatch(self, proto, body):
+                log(f"   sign handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! sign {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if stateful_handlers.dispatch(self, proto, body):
                 log(f"   stateful handled {_name(proto, 'c2s')}")
                 return
@@ -261,6 +268,7 @@ def main() -> None:
         + len(combat_handlers.COMBAT_PROTOCOLS)
         + len(formation_backup_handlers.FORMATION_BACKUP_PROTOCOLS)
         + len(progression_handlers.PROGRESSION_PROTOCOLS)
+        + len(sign_handlers.SIGN_PROTOCOLS)
     )
     log(f"game TCP :{PORT} (plain wire, head token {HEAD_TOKEN:#06x}, stateful={handled})")
     while True:
