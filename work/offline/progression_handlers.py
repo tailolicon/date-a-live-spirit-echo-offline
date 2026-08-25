@@ -13,6 +13,8 @@ from typing import Any
 from player_save import save as persist
 from protocol_schema import decode_request, encode_response
 
+HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS = 8401
+HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT = 8406
 HERO_SPIRIT_REQ_NEW_SPIRIT_INFO = 8407
 HERO_REQ_USE_SKILL_STRATEGY = 1040
 FRIEND_REQ_OPERATE = 3074
@@ -34,6 +36,8 @@ GIVE_GIFT = 7
 RECEIVE_GIFT = 8
 
 PROGRESSION_PROTOCOLS = frozenset({
+    HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS,
+    HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT,
     HERO_SPIRIT_REQ_NEW_SPIRIT_INFO,
     HERO_REQ_USE_SKILL_STRATEGY,
     FRIEND_REQ_OPERATE,
@@ -186,7 +190,65 @@ def _operate_friend(state: dict[str, Any], operation: int, targets: list[int]) -
     return changed
 
 
+def _request_rows(request: dict[str, Any]) -> list[dict[str, Any]]:
+    for value in request.values():
+        if isinstance(value, list):
+            return [row for row in value if isinstance(row, dict)]
+    return []
+
+
+def _put_spirit_points(state: dict[str, Any], request: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    spirit, normalized = _normalize_spirit(state)
+    requested: dict[int, int] = {}
+    for row in _request_rows(request):
+        cid = _as_int(row.get("cid"))
+        num = _as_int(row.get("num"))
+        if cid > 0 and num > 0:
+            requested[cid] = requested.get(cid, 0) + num
+    if not requested:
+        return spirit, normalized
+
+    allocated = sum(max(0, _as_int(row.get("num"))) for row in spirit.get("specialism", []))
+    remaining = max(0, _as_int(spirit.get("spiritPoints")) - allocated)
+    total_request = sum(requested.values())
+    if total_request > remaining:
+        return spirit, normalized
+
+    by_cid = {row["cid"]: row for row in spirit["specialism"]}
+    for cid, num in requested.items():
+        row = by_cid.get(cid)
+        if row is None:
+            row = {"cid": cid, "num": 0}
+            spirit["specialism"].append(row)
+            by_cid[cid] = row
+        row["num"] += num
+    state["spiritInfo"] = deepcopy(spirit)
+    return spirit, True
+
+
+def _show_new_spirit(state: dict[str, Any]) -> bool:
+    spirit, changed = _normalize_spirit(state)
+    if spirit.get("firstShow", False):
+        spirit["firstShow"] = False
+        state["spiritInfo"] = deepcopy(spirit)
+        changed = True
+    for hero in _hero_rows(state):
+        info = hero.get("spiritInfo")
+        if isinstance(info, dict) and bool(info.get("firstShow", False)):
+            info["firstShow"] = False
+            changed = True
+    return changed
+
+
 def response_for(proto: int, state: dict[str, Any], body: bytes = b"") -> tuple[bytes, bool] | None:
+    if proto == HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS:
+        spirit, changed = _put_spirit_points(state, decode_request(proto, body))
+        return encode_response(proto, {"spirit": spirit}), changed
+
+    if proto == HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT:
+        changed = _show_new_spirit(state)
+        return encode_response(proto, {}), changed
+
     if proto == HERO_SPIRIT_REQ_NEW_SPIRIT_INFO:
         spirit, changed = _normalize_spirit(state)
         return encode_response(proto, {"spirits": spirit}), changed
