@@ -1,0 +1,8 @@
+﻿
+# linux migration backup excludes
+work/
+capture/
+*.apk
+*.xapk
+*.keystore
+*.pem
