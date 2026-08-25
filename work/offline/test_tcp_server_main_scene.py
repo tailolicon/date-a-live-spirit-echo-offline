@@ -25,13 +25,22 @@ class MainSceneDungeonStateTests(unittest.TestCase):
             "0a100a0e0a0c08ed95061801200128003000",
         )
 
-    def test_explicit_empty_passed_levels_can_disable_bootstrap(self) -> None:
-        self.assertEqual(encode_dungeon_level_info({"passedLevels": []}), b"")
+    def test_explicit_empty_passed_levels_keeps_fail_safe_bootstrap(self) -> None:
+        self.assertEqual(
+            encode_dungeon_level_info({"passedLevels": []}),
+            encode_dungeon_level_info({}),
+        )
 
     def test_custom_passed_levels_are_encoded(self) -> None:
         body = encode_dungeon_level_info({"passedLevels": [FIRST_PLOT_LEVEL, 101102]})
         self.assertIn(bytes.fromhex("08ed9506"), body)
         self.assertIn(bytes.fromhex("08ee9506"), body)
+
+    def test_invalid_passed_levels_fall_back_to_first_plot(self) -> None:
+        self.assertEqual(
+            encode_dungeon_level_info({"passedLevels": [0, -1]}),
+            encode_dungeon_level_info({}),
+        )
 
 
 if __name__ == "__main__":
