@@ -1,0 +1,27 @@
+name: MainScene regression
+
+on:
+  push:
+    branches:
+      - fix/main-scene-zero-state
+  pull_request:
+    paths:
+      - 'work/offline/**'
+      - 'work/tools/**'
+      - 'reference/lua/lua/net/NetWork.lua'
+      - '.github/workflows/main-scene-regression.yml'
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Python sources
+        run: python -m compileall -q work/offline work/tools
+      - name: Run dungeon bootstrap tests
+        run: python work/offline/test_tcp_server_main_scene.py
+      - name: Run MainScene Lua hotpatch tests
+        run: python work/tools/test_hotpatch_main_scene.py
