@@ -1,0 +1,200 @@
+
+local UnZipFileLayer = class("UnZipFileLayer", BaseLayer)
+
+function UnZipFileLayer:ctor( callBack )
+    self.super.ctor(self)
+    self.strCfg = TFGlobalUtils:requireGlobalFile("lua.table.StartString")
+    self:init("lua.uiconfig.common.unZipFileLayer")
+    self.callBack = callBack
+    self.status = 0
+    self.downLoadedAwbFiles = {}
+    self.unZipAwbIdx = 0
+end
+
+function UnZipFileLayer:initUI(ui)
+    self.super.initUI(self, ui)
+
+    self.label_title = TFDirector:getChildByPath(ui,"label_title")
+    local text = ""
+    if self.strCfg[190000885] then
+        text = self.strCfg[190000885].text
+    else
+        text = "no string id 190000885 "
+    end
+    self.label_title:setText(text)
+
+    local img_bg = TFDirector:getChildByPath(ui,"img_bg")
+    local path,desc = Utils:randomAD(3)
+    img_bg:setTexture(path)
+
+    local pDirector = CCDirector:sharedDirector()
+    local frameSize = pDirector:getOpenGLView():getFrameSize()
+    local baseSize = CCSize(1136 , 640)
+    local realSize = CCSize(math.ceil(frameSize.width * baseSize.height / frameSize.height) , baseSize.height)
+
+    local size = img_bg:getSize();
+    if realSize.width > 1386 and size.width == 1386 and size.height == 640 then
+        img_bg:setSize(realSize)
+    elseif realSize.width > 1386 and size.width == 1386 then
+        img_bg:setSize(CCSizeMake(realSize.width, size.height))
+    end
+
+    self.loadingBgImg = TFDirector:getChildByPath(ui,"img_loadingbg") 
+    self.loadingBgImg:hide()
+
+    self.processLoadingBar = TFDirector:getChildByPath(ui,"loadingBar_process") 
+    self.processLoadingBar:hide()
+
+    self:startUnCompressAwb()
+end
+
+function UnZipFileLayer:registerEvents()
+    self.super.registerEvents(self)
+end
+
+function UnZipFileLayer:removeEvents()
+    self.super.removeEvents(self)
+    self:stopTimer()
+end
+
+function UnZipFileLayer:onShow()
+    self.super.onShow(self)
+end
+
+function UnZipFileLayer:onExit()
+    self:stopTimer()
+end
+
+function UnZipFileLayer:dispose()
+    self:stopTimer()
+end
+
+function UnZipFileLayer:unCompressAwbStart( num )
+    local text = ""
+    if self.strCfg[190000885] then
+        text = self.strCfg[190000885].text
+    else
+        text = "no string id 190000885 "
+    end
+    self.label_title:setText(text .." (0/" ..num .. ")")
+end
+
+function UnZipFileLayer:unCompressAwbing( curNum, allNum)
+    local text = ""
+    if self.strCfg[190000885] then
+        text = self.strCfg[190000885].text
+    else
+        text = "no string id 190000885 "
+    end
+    
+    self.label_title:setText(text .." (" ..curNum .."/" ..allNum ..")")
+    self.loadingBgImg:show()
+    self.processLoadingBar:show()
+    self.processLoadingBar:setPercent(curNum/allNum*100)
+end
+
+function UnZipFileLayer:unCompressAwbFailed( )
+    local text = ""
+    if self.strCfg[190000886] then
+        text = self.strCfg[190000886].text
+    else
+        text = "no string id 190000886 "
+    end
+    self.label_title:setText(text)
+end
+
+function UnZipFileLayer:unCompressAwbComplete( )
+    local text = ""
+    if self.strCfg[190000887] then
+        text = self.strCfg[190000887].text
+    else
+        text = "no string id 190000887 "
+    end
+    self.label_title:setText(text)
+end
+
+function UnZipFileLayer:startUnCompressAwb( )
+    if TFClientAwbBundle == nil then 
+        if self.callBack then
+            self.callBack() 
+            AlertManager:closeLayer(self)
+        end
+        return
+    end
+
+    local update = function( dt )
+        if self.status == 0 then
+            self.unZipAwbIdx = 0
+            self.downLoadedAwbFiles = TFAssetsManager:getDownLoadedAwbFiles()
+            if #self.downLoadedAwbFiles <= 0 then 
+                self.status = 5
+            else
+                self.status = 1
+            end
+            self:unCompressAwbStart(#self.downLoadedAwbFiles)
+        elseif self.status == 1 then --开始解压
+            self.status = 2
+            self.unZipAwbIdx = self.unZipAwbIdx + 1
+            local awbId = self.downLoadedAwbFiles[self.unZipAwbIdx]
+            if TFClientAwbBundle and awbId then
+                local completeCallBack = function( filePath )
+                    print("TFClientAwbBundle unzipFiles  success!!!! filePath: " ..tostring(filePath))
+                    if TFFileUtil:existFile(filePath) then       
+                        local t ,erro = os.remove(filePath)
+                        print("remove awb: ".. tostring(t) .. " "..tostring(erro))
+                    else
+                        print("remove awb  fail , not exist ")
+                    end
+                    self.status = 3
+                end
+
+                local failedCallBack = function( status )
+                    print("TFClientAwbBundle unzipFiles  failed!!!! ")
+                    self.status = 4
+                end
+                TFClientAwbBundle:defaultAwbBundle():unzipFiles(awbId ..".awb", completeCallBack, failedCallBack)
+            end
+        elseif self.status == 2 then --解压进行中
+        elseif self.status == 3 then --解压完成
+            self:unCompressAwbing(self.unZipAwbIdx, #self.downLoadedAwbFiles)
+            if self.unZipAwbIdx >= #self.downLoadedAwbFiles then
+                self.status = 5 
+            else
+                self.status = 1
+            end
+        elseif self.status == 4 then
+            self:unCompressAwbFailed( )
+            self.status = -100
+            self:stopTimer()
+        elseif self.status == 5 then --解压所有awb完成
+            self:unCompressAwbComplete()
+            self.status = 6
+        elseif self.status == 6 then
+            self.status = -100
+            self:stopTimer()
+            print("UnZipFileLayer:startUnCompressAwb  complete " ..tostring(self.callBack))
+            if self.callBack then self.callBack() end
+            AlertManager:closeLayer(self)
+            print("+++++++++++++++++++++++++++++++++++++++++")
+        end
+    end
+    self:stopTimer()
+    self:startTimer(update)
+end
+
+function UnZipFileLayer:startTimer( update )
+    self:stopTimer()
+    self.timer = TFDirector:addTimer(1000,-1,nil,function( )
+        update()
+    end)
+end
+
+function UnZipFileLayer:stopTimer( )
+    if self.timer then 
+        TFDirector:removeTimer(self.timer)
+    end
+    self.timer = nil
+end
+
+
+return UnZipFileLayer

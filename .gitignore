@@ -1,8 +1,28 @@
-﻿
-# linux migration backup excludes
-work/
-capture/
+__pycache__/
+*.pyc
+
+# Game binaries. Not redistributable and far too large for git.
+# Put com.datealive.action.rpg.apk in work/apk/ yourself, then run
+#   python work/tools/bootstrap.py
 *.apk
 *.xapk
+*.idsig
 *.keystore
 *.pem
+work/apk/
+work/extract/
+
+# Full decrypted lua dump (~2GB, mostly lua/table + lua/uiconfig data blobs).
+# The curated ~22MB slice the tooling needs is committed under reference/lua.
+# Rebuild the rest with: python work/tools/bootstrap.py --full
+work/dump/
+
+# frida-server binaries (~160MB). The current stack does not use frida at all;
+# work/frida is kept only for the superseded injection approach.
+work/frida/frida-server*
+
+# Runtime output
+work/offline/logs/
+work/offline/certs/
+work/hotpatch/
+capture/
