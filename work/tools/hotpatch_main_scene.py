@@ -22,9 +22,9 @@ MARKER = "[DAL-OFFLINE] zero-state login normalization"
 
 def patch_network(src: str) -> str:
     """Apply the normal NetWork tracing patch plus zero-state normalization."""
-    src = base.patch_network(src)
     if MARKER in src:
         return src
+    src = base.patch_network(src)
 
     anchor = "    TFDirector:dispatchProtocolWith(nType, tTemp)"
     assert src.count(anchor) == 1, "NetWork dispatch anchor missing/ambiguous"
