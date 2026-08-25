@@ -66,6 +66,51 @@ class ProgressionHandlerTests(unittest.TestCase):
         self.assertEqual(spirit["specialism"], [{"cid": 1001, "num": 3}])
         self.assertEqual(spirit["angleSpirits"], [{"heroCid": 110101, "lv": 4}])
 
+    def test_spirit_point_allocation_respects_pool_and_is_atomic(self) -> None:
+        state = {"spiritInfo": {
+            "spiritPoints": 5,
+            "grade": 0,
+            "level": 1,
+            "exp": 0,
+            "specialism": [{"cid": 1001, "num": 1}],
+            "angleSpirits": [],
+            "maxLv": 1,
+        }}
+        field_name = registry().c2s[ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS][0].name
+        body = request(ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS, {
+            field_name: [{"cid": 1001, "num": 1}, {"cid": 1002, "num": 2}],
+        })
+        payload, changed = ph.response_for(ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS, state, body)
+        self.assertTrue(changed)
+        self.assertEqual(state["spiritInfo"]["specialism"], [
+            {"cid": 1001, "num": 2}, {"cid": 1002, "num": 2},
+        ])
+        data = response(ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS, payload)
+        self.assertEqual(data["spirit"]["specialism"], state["spiritInfo"]["specialism"])
+
+        before = copy.deepcopy(state)
+        too_many = request(ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS, {
+            field_name: [{"cid": 1003, "num": 2}],
+        })
+        _, changed = ph.response_for(ph.HERO_SPIRIT_REQ_PUT_SPIRIT_POINTS, state, too_many)
+        self.assertFalse(changed)
+        self.assertEqual(state, before)
+
+    def test_show_new_spirit_clears_global_and_per_hero_flags(self) -> None:
+        state = {
+            "spiritInfo": {"spiritPoints": 0, "grade": 0, "level": 1, "exp": 0,
+                           "specialism": [], "firstShow": True, "feedback": False,
+                           "angleSpirits": [], "maxLv": 1},
+            "heroes": [{"id": "h1", "spiritInfo": {"firstShow": True}}],
+        }
+        payload, changed = ph.response_for(ph.HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT, state)
+        self.assertTrue(changed)
+        self.assertEqual(response(ph.HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT, payload), {})
+        self.assertFalse(state["spiritInfo"]["firstShow"])
+        self.assertFalse(state["heroes"][0]["spiritInfo"]["firstShow"])
+        _, changed2 = ph.response_for(ph.HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT, state)
+        self.assertFalse(changed2)
+
     def test_skill_strategy_mutates_owned_hero_and_mirrors_response(self) -> None:
         state = {"heroes": [{"id": "hero-1", "cid": 110101, "useSkillStrategy": 1}]}
         body = request(ph.HERO_REQ_USE_SKILL_STRATEGY, {"heroId": "hero-1", "skillStrategyId": 3})
