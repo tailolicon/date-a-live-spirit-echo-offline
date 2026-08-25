@@ -33,6 +33,17 @@ if [[ -n "$AAPT" ]]; then
   "$AAPT" dump badging work/apk/config.armeabi_v7a.apk > e2e/split-badging.txt
 fi
 
+# Keep the XAPK's InstallPack around for diagnostics. It is intentionally not
+# installed unless it declares the game package as a split; its badging tells
+# us whether it is a separate APKPure helper/package or part of the app set.
+INSTALLPACK_ENTRY="$(grep -E '(^|/)InstallPack\.apk$' e2e/xapk-list.txt | head -1 || true)"
+if [[ -n "$INSTALLPACK_ENTRY" ]]; then
+  unzip -p work/apk/game.xapk "$INSTALLPACK_ENTRY" > work/apk/InstallPack.apk
+  if [[ -n "$AAPT" ]]; then
+    "$AAPT" dump badging work/apk/InstallPack.apk > e2e/installpack-badging.txt || true
+  fi
+fi
+
 KEY_ALIAS="$(keytool -list -v -keystore work/apk/debug.keystore -storepass android 2>/dev/null | sed -n 's/^Alias name: //p' | head -1)"
 test -n "$KEY_ALIAS"
 echo "key_alias=$KEY_ALIAS" > e2e/signing-key.txt
@@ -47,7 +58,13 @@ echo "key_alias=$KEY_ALIAS" > e2e/signing-key.txt
 "$APKSIGNER" verify --print-certs work/apk/config.armeabi_v7a.signed.apk > e2e/split-signing.txt
 
 set +e
-adb install-multiple -r work/apk/base-offline.apk work/apk/config.armeabi_v7a.signed.apk 2>&1 | tee e2e/install.txt
+# Pairip's local license client checks the installer package. A plain `adb
+# install` records no Play installer and the captured run dies before Lua with
+# "Local install check failed due to wrong installer". Preserve the expected
+# installer identity while keeping the exact same APK bytes/signatures.
+adb install-multiple -r -i com.android.vending \
+  work/apk/base-offline.apk work/apk/config.armeabi_v7a.signed.apk \
+  2>&1 | tee e2e/install.txt
 INSTALL_RC=${PIPESTATUS[0]}
 set -e
 if [[ $INSTALL_RC -ne 0 ]]; then
@@ -55,6 +72,9 @@ if [[ $INSTALL_RC -ne 0 ]]; then
   exit "$INSTALL_RC"
 fi
 adb shell pm path com.datealive.action.rpg | tee e2e/package-paths.txt
+adb shell dumpsys package com.datealive.action.rpg \
+  | grep -E 'installerPackageName|initiatingPackageName|originatingPackageName|PackageSignatures|versionName=' \
+  > e2e/package-install-source.txt || true
 
 DEVICE="$(adb devices | awk '$2=="device" && $1 ~ /^emulator-/ {print $1; exit}')"
 test -n "$DEVICE"
@@ -97,7 +117,15 @@ cp work/offline/logs/tcp.log e2e/tcp.log || true
 echo '=== TCP tail ==='
 tail -80 e2e/tcp.out || true
 echo '=== relevant logcat ==='
-grep -E 'DAL-OFFLINE|DAL-WAIT|MainScene|MainLayer|DefaultMainLayer|levelCid|LUA ERROR|LUA-print|UnsatisfiedLinkError' e2e/logcat.txt | tail -200 || true
+grep -E 'DAL-OFFLINE|DAL-WAIT|MainScene|MainLayer|DefaultMainLayer|levelCid|LUA ERROR|LUA-print|UnsatisfiedLinkError|Local install check|Fatal signal|ndk_translation' e2e/logcat.txt | tail -240 || true
+
+# Fail with an explicit pre-Lua signature if the emulator/native bridge cannot
+# execute the client. This makes the artifact useful instead of misreporting a
+# server regression.
+if grep -q 'Fatal signal' e2e/logcat.txt && ! grep -q 'proto=257' e2e/tcp.out; then
+  echo 'client crashed before reaching the local server' >&2
+  exit 86
+fi
 
 # A connection and the stateful 1796 bootstrap must both have run.
 grep -q 'proto=1796' e2e/tcp.out
