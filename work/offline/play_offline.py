@@ -6,7 +6,8 @@ The stack is now just three pieces - no Frida, no TLS front, no APK rebuild:
   1. work/tools/hotpatch_main_scene.py drops the existing offline lua patches
      plus zero-state MainScene guards into the game's TFDebug search path.
   2. http_server.py :18099   account/getServerInfo, /login, /querydate, notices.
-  3. tcp_server.py  :18100   the game server itself.
+  3. tcp_server_main_scene.py :18100 wraps the game server with the minimum
+     persistent dungeon state needed to enter the normal MainLayer.
 
 The device reaches this machine at 10.0.2.2 (MuMu is 10.0.2.15/24), so the
 patched URLs point straight there and no adb reverse or connect() hook is
@@ -114,7 +115,8 @@ def main() -> int:
     print("[3/4] local servers")
     port_free(HTTP_PORT)
     port_free(GAME_PORT)
-    procs = [spawn("http_server.py", "http.out"), spawn("tcp_server.py", "tcp.out")]
+    procs = [spawn("http_server.py", "http.out"),
+             spawn("tcp_server_main_scene.py", "tcp.out")]
     time.sleep(1.5)
     for name, port in (("HTTP", HTTP_PORT), ("game TCP", GAME_PORT)):
         if not port_alive(port):
