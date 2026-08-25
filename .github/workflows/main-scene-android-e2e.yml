@@ -28,14 +28,16 @@ jobs:
           python -m unittest discover -s work/offline -p 'test_*.py' -v
           python -m unittest discover -s work/tools -p 'test_*.py' -v
 
-      - name: Download offline APK from public Drive artifact folder
+      - name: Download game artifacts from public Drive folder
         run: |
           python -m pip install --disable-pip-version-check gdown
           mkdir -p work/apk e2e work/offline/logs
           gdown 'https://drive.google.com/uc?id=1Xh77j3WtNAtAX-oIlIKQpox_O2oKgM2L' -O work/apk/base-offline.apk
           gdown 'https://drive.google.com/uc?id=1v13GnQTnJxE75vUm93HT6Xc-UgMJjqIy' -O work/apk/debug.keystore
+          gdown 'https://drive.google.com/uc?id=1iA0jjM8DEEvv8Yt5Zmg9UbAGyAQWYKT0' -O work/apk/game.xapk
           echo '03a0693a4878ecdcf09dd89638813f7fd0540de196bd7c5f4c2b6befd39d40ac  work/apk/base-offline.apk' | sha256sum -c -
-          ls -lh work/apk/base-offline.apk
+          echo '123b01823d22afb95e85a6440ea6d2ba95b250cda64c4cc35e4538c183f88c67  work/apk/game.xapk' | sha256sum -c -
+          ls -lh work/apk/base-offline.apk work/apk/game.xapk
 
       - name: Enable KVM
         run: |
