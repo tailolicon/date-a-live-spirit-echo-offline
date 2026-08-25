@@ -35,8 +35,12 @@ class ProgressionHandlerTests(unittest.TestCase):
         self.assertEqual(spirit["level"], 1)
         self.assertEqual(spirit["maxLv"], 1)
         self.assertEqual(spirit["spiritPoints"], 0)
-        self.assertEqual(spirit["specialism"], [])
-        self.assertEqual(spirit["angleSpirits"], [])
+        # Empty repeated protobuf fields are absent on the wire by design.
+        # The persisted semantic state still keeps concrete empty lists.
+        self.assertEqual(spirit.get("specialism", []), [])
+        self.assertEqual(spirit.get("angleSpirits", []), [])
+        self.assertEqual(state["spiritInfo"]["specialism"], [])
+        self.assertEqual(state["spiritInfo"]["angleSpirits"], [])
         self.assertEqual(state["spiritInfo"]["level"], 1)
 
         payload2, changed2 = ph.response_for(ph.HERO_SPIRIT_REQ_NEW_SPIRIT_INFO, state)
@@ -95,6 +99,7 @@ class ProgressionHandlerTests(unittest.TestCase):
         )
         self.assertTrue(changed)
         self.assertEqual(state["friends"][0]["status"], ph.SHIELDING)
+        self.assertEqual(state["friends"][0]["previousStatus"], ph.FRIEND)
         self.assertEqual(response(ph.FRIEND_REQ_OPERATE, payload), {"type": ph.SHIELD_PLAYER, "targets": [1]})
 
         _, changed = ph.response_for(
@@ -102,7 +107,9 @@ class ProgressionHandlerTests(unittest.TestCase):
             request(ph.FRIEND_REQ_OPERATE, {"type": ph.LIFTED_SHIELD, "targets": [1]}),
         )
         self.assertTrue(changed)
-        self.assertNotIn(1, [row["pid"] for row in state["friends"]])
+        restored = next(row for row in state["friends"] if row["pid"] == 1)
+        self.assertEqual(restored["status"], ph.FRIEND)
+        self.assertNotIn("previousStatus", restored)
 
         _, changed = ph.response_for(
             ph.FRIEND_REQ_OPERATE, state,
@@ -118,11 +125,12 @@ class ProgressionHandlerTests(unittest.TestCase):
         self.assertTrue(changed)
         self.assertNotIn(3, [row["pid"] for row in state["friends"]])
 
-        _, changed = ph.response_for(
-            ph.FRIEND_REQ_OPERATE, state,
-            request(ph.FRIEND_REQ_OPERATE, {"type": ph.DELETE_FRIEND, "targets": [2]}),
-        )
-        self.assertTrue(changed)
+        for pid in (1, 2):
+            _, changed = ph.response_for(
+                ph.FRIEND_REQ_OPERATE, state,
+                request(ph.FRIEND_REQ_OPERATE, {"type": ph.DELETE_FRIEND, "targets": [pid]}),
+            )
+            self.assertTrue(changed)
         self.assertEqual(state["friends"], [])
 
     def test_friend_gifts_are_idempotent_and_ignore_self(self) -> None:
