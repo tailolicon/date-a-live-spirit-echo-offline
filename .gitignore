@@ -23,6 +23,7 @@ work/frida/frida-server*
 
 # Runtime output
 work/offline/logs/
+work/offline/logs-bundle.zip
 work/offline/certs/
 work/hotpatch/
 capture/

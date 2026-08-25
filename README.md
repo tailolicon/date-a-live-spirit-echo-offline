@@ -23,6 +23,12 @@ unblocked this, and the exact addresses in the binary.
 | MuMu emulator, rooted, adb reachable | default `127.0.0.1:16384` | — |
 | Python 3.11+ | on PATH | — |
 
+`docs/ARTIFACTS.md` lists the binaries that live outside git — the original
+XAPK, the signed offline build, the keystore, `libTerransForce.so` and the
+session logs — with sizes and SHA-256, plus how to regenerate everything else
+locally instead of downloading it. `work/tools/upload_artifacts.py` pushes that
+set to Drive via rclone.
+
 The APK must be the **repacked offline build** — the stock APK points at the
 live login server. `work/patch_offline_lua.py` produces it from the stock APK
 (patches the login URL and skips hot-update, then re-signs). Once installed,
