@@ -12,18 +12,46 @@ adb shell getprop ro.build.version.release | tr -d '\r' | sed 's/^/Android=/' | 
 
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -1 || true)"
+APKSIGNER="$(find "$SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -1 || true)"
+test -n "$APKSIGNER"
+
 if [[ -n "$AAPT" ]]; then
   "$AAPT" dump badging work/apk/base-offline.apk > e2e/apk-badging.txt
 else
   echo 'aapt not found; continuing without APK badging dump' > e2e/apk-badging.txt
 fi
 
+# The signed offline base does not carry the native ARM libraries. Restore the
+# original ABI split from the XAPK, then re-sign it with the same debug key as
+# base-offline.apk so PackageManager accepts the split alongside the patched base.
+unzip -Z1 work/apk/game.xapk > e2e/xapk-list.txt
+SPLIT_ENTRY="$(grep -E '(^|/)config\.armeabi_v7a\.apk$' e2e/xapk-list.txt | head -1 || true)"
+test -n "$SPLIT_ENTRY"
+unzip -p work/apk/game.xapk "$SPLIT_ENTRY" > work/apk/config.armeabi_v7a.apk
+unzip -l work/apk/config.armeabi_v7a.apk | grep -E 'lib/.+\.so$' > e2e/split-libs.txt || true
+if [[ -n "$AAPT" ]]; then
+  "$AAPT" dump badging work/apk/config.armeabi_v7a.apk > e2e/split-badging.txt
+fi
+
+KEY_ALIAS="$(keytool -list -v -keystore work/apk/debug.keystore -storepass android 2>/dev/null | sed -n 's/^Alias name: //p' | head -1)"
+test -n "$KEY_ALIAS"
+echo "key_alias=$KEY_ALIAS" > e2e/signing-key.txt
+"$APKSIGNER" sign \
+  --ks work/apk/debug.keystore \
+  --ks-key-alias "$KEY_ALIAS" \
+  --ks-pass pass:android \
+  --key-pass pass:android \
+  --out work/apk/config.armeabi_v7a.signed.apk \
+  work/apk/config.armeabi_v7a.apk
+"$APKSIGNER" verify --print-certs work/apk/base-offline.apk > e2e/base-signing.txt
+"$APKSIGNER" verify --print-certs work/apk/config.armeabi_v7a.signed.apk > e2e/split-signing.txt
+
 set +e
-adb install -r work/apk/base-offline.apk 2>&1 | tee e2e/install.txt
+adb install-multiple -r work/apk/base-offline.apk work/apk/config.armeabi_v7a.signed.apk 2>&1 | tee e2e/install.txt
 INSTALL_RC=${PIPESTATUS[0]}
 set -e
 if [[ $INSTALL_RC -ne 0 ]]; then
-  echo "base-offline.apk install failed (rc=$INSTALL_RC)" >&2
+  echo "base + armeabi-v7a split install failed (rc=$INSTALL_RC)" >&2
   exit "$INSTALL_RC"
 fi
 adb shell pm path com.datealive.action.rpg | tee e2e/package-paths.txt
@@ -69,7 +97,7 @@ cp work/offline/logs/tcp.log e2e/tcp.log || true
 echo '=== TCP tail ==='
 tail -80 e2e/tcp.out || true
 echo '=== relevant logcat ==='
-grep -E 'DAL-OFFLINE|DAL-WAIT|MainScene|MainLayer|DefaultMainLayer|levelCid|LUA ERROR|LUA-print' e2e/logcat.txt | tail -160 || true
+grep -E 'DAL-OFFLINE|DAL-WAIT|MainScene|MainLayer|DefaultMainLayer|levelCid|LUA ERROR|LUA-print|UnsatisfiedLinkError' e2e/logcat.txt | tail -200 || true
 
 # A connection and the stateful 1796 bootstrap must both have run.
 grep -q 'proto=1796' e2e/tcp.out
