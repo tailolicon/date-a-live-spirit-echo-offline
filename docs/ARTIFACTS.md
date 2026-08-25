@@ -14,6 +14,18 @@ derived ones locally rather than fetching them:
 | `work/extract/` | unzip the base APK |
 | `work/frida/frida-server*` | frida GitHub releases |
 
+Uploaded to `gdrive:dal-offline` (verified: every SHA-256 below matches what
+Drive reports). The folder mirrors the repo layout, so each file drops straight
+back into place. To fetch it all:
+
+```sh
+rclone config                                  # one-time: add a Drive remote
+rclone copy gdrive:dal-offline . --progress
+```
+
+Verify afterwards with `rclone hashsum sha256 gdrive:dal-offline`, or locally
+against the hashes below.
+
 ## Contents
 
 ### `Date+A+Live_+Spirit+Echo_1.37_APKPure.xapk`
