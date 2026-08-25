@@ -35,8 +35,6 @@ class ProgressionHandlerTests(unittest.TestCase):
         self.assertEqual(spirit["level"], 1)
         self.assertEqual(spirit["maxLv"], 1)
         self.assertEqual(spirit["spiritPoints"], 0)
-        # Empty repeated protobuf fields are absent on the wire by design.
-        # The persisted semantic state still keeps concrete empty lists.
         self.assertEqual(spirit.get("specialism", []), [])
         self.assertEqual(spirit.get("angleSpirits", []), [])
         self.assertEqual(state["spiritInfo"]["specialism"], [])
@@ -111,23 +109,43 @@ class ProgressionHandlerTests(unittest.TestCase):
         _, changed2 = ph.response_for(ph.HERO_SPIRIT_REQ_SHOW_NEW_SPIRIT, state)
         self.assertFalse(changed2)
 
-    def test_skill_strategy_mutates_owned_hero_and_mirrors_response(self) -> None:
-        state = {"heroes": [{"id": "hero-1", "cid": 110101, "useSkillStrategy": 1}]}
+    def test_skill_strategy_materializes_page_and_mirrors_response(self) -> None:
+        state = {"heroes": [{
+            "id": "hero-1", "cid": 110101, "useSkillStrategy": 1,
+            "skillStrategyInfo": [{"id": 1, "name": "Default", "alreadyUseSkillPiont": 0,
+                                   "angeSkillInfos": [], "passiveSkillInfo": []}],
+        }]}
         body = request(ph.HERO_REQ_USE_SKILL_STRATEGY, {"heroId": "hero-1", "skillStrategyId": 3})
         payload, changed = ph.response_for(ph.HERO_REQ_USE_SKILL_STRATEGY, state, body)
         self.assertTrue(changed)
-        self.assertEqual(state["heroes"][0]["useSkillStrategy"], 3)
+        hero = state["heroes"][0]
+        self.assertEqual(hero["useSkillStrategy"], 3)
+        page = next(row for row in hero["skillStrategyInfo"] if row["id"] == 3)
+        self.assertEqual(page["alreadyUseSkillPiont"], 0)
+        self.assertEqual(page["angeSkillInfos"], [])
+        self.assertEqual(page["passiveSkillInfo"], [])
         self.assertEqual(response(ph.HERO_REQ_USE_SKILL_STRATEGY, payload), {
             "heroId": "hero-1", "skillStrategyId": 3,
         })
+
+    def test_skill_strategy_rejects_unknown_page_atomically(self) -> None:
+        state = {"heroes": [{"id": "hero-1", "cid": 110101, "useSkillStrategy": 1,
+                             "skillStrategyInfo": [{"id": 1, "name": "Default"}]}]}
+        before = copy.deepcopy(state)
+        body = request(ph.HERO_REQ_USE_SKILL_STRATEGY, {"heroId": "hero-1", "skillStrategyId": 99})
+        payload, changed = ph.response_for(ph.HERO_REQ_USE_SKILL_STRATEGY, state, body)
+        self.assertFalse(changed)
+        self.assertEqual(state, before)
+        self.assertEqual(response(ph.HERO_REQ_USE_SKILL_STRATEGY, payload)["skillStrategyId"], 1)
 
     def test_skill_strategy_unknown_hero_is_non_mutating(self) -> None:
         state = {"heroes": [{"id": "hero-1", "cid": 110101}]}
         before = copy.deepcopy(state)
         body = request(ph.HERO_REQ_USE_SKILL_STRATEGY, {"heroId": "missing", "skillStrategyId": 2})
-        _, changed = ph.response_for(ph.HERO_REQ_USE_SKILL_STRATEGY, state, body)
+        payload, changed = ph.response_for(ph.HERO_REQ_USE_SKILL_STRATEGY, state, body)
         self.assertFalse(changed)
         self.assertEqual(state, before)
+        self.assertEqual(response(ph.HERO_REQ_USE_SKILL_STRATEGY, payload)["skillStrategyId"], 1)
 
     def test_friend_delete_block_unblock_accept_and_refuse(self) -> None:
         state = {
