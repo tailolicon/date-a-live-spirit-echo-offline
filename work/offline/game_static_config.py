@@ -128,6 +128,29 @@ def _map_costs(src: str | None) -> list[dict[str, int]]:
     return result
 
 
+def _map_options(src: str | None) -> list[list[dict[str, int]]]:
+    """Parse lists like BreakCost where every row is an alternative item map."""
+    if not src:
+        return []
+    result: list[list[dict[str, int]]] = []
+    # Only inspect immediate children: nested map keys are item CIDs, not option indexes.
+    root_start = src.find("{")
+    root_end = _match_brace(src, root_start) if root_start >= 0 else len(src)
+    cursor = root_start + 1
+    while cursor < root_end:
+        match = re.search(r"\[(\d+)\]\s*=\s*\{", src[cursor:root_end])
+        if match is None:
+            break
+        absolute = cursor + match.start()
+        brace = src.find("{", absolute)
+        end = _match_brace(src, brace)
+        option = _map_costs(src[brace:end])
+        if option:
+            result.append(option)
+        cursor = end
+    return result
+
+
 def _reward_rows(src: str | None) -> list[dict[str, int]]:
     if not src:
         return []
@@ -349,7 +372,7 @@ class GameStaticConfig:
         reward = _named_block(block, "BreakReward")
         return {
             "level": max(0, _int_field(block, "AngelLevel")),
-            "costOptions": _array_pairs(_named_block(block, "BreakCost")),
+            "costOptions": _map_options(_named_block(block, "BreakCost")),
             "reward": _map_costs(reward),
         }
 
