@@ -111,7 +111,10 @@ def _friend_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
     raw = state.get("friends", [])
     if not isinstance(raw, list):
         state["friends"] = raw = []
-    return [row for row in raw if isinstance(row, dict)]
+    if any(not isinstance(row, dict) for row in raw):
+        raw = [row for row in raw if isinstance(row, dict)]
+        state["friends"] = raw
+    return raw
 
 
 def _friend_pid(row: dict[str, Any]) -> int:
@@ -140,30 +143,31 @@ def _operate_friend(state: dict[str, Any], operation: int, targets: list[int]) -
                 changed = True
         elif operation == SHIELD_PLAYER:
             if row is not None and _as_int(row.get("status")) != SHIELDING:
+                previous = _as_int(row.get("status"))
+                if previous in (FRIEND, APPLY, ADD, INVITE):
+                    row["previousStatus"] = previous
                 row["status"] = SHIELDING
                 changed = True
         elif operation == LIFTED_SHIELD:
-            # The client removes an unblocked player from the blacklist.  Keep
-            # a pre-existing real friend as FRIEND; otherwise drop the local
-            # placeholder instead of inventing a relationship.
             if row is not None and _as_int(row.get("status")) == SHIELDING:
                 previous = _as_int(row.get("previousStatus"))
-                if previous == FRIEND:
-                    row["status"] = FRIEND
+                if previous in (FRIEND, APPLY, ADD, INVITE):
+                    row["status"] = previous
+                    row.pop("previousStatus", None)
                 else:
                     rows.pop(index)
-                row.pop("previousStatus", None)
                 changed = True
         elif operation == AGREE_APPLY:
             if row is not None and _as_int(row.get("status")) == APPLY:
                 row["status"] = FRIEND
+                row.pop("previousStatus", None)
                 changed = True
         elif operation == REFUSE_APPLY:
             if row is not None and _as_int(row.get("status")) == APPLY:
                 rows.pop(index)
                 changed = True
         elif operation == APPLY_FRIEND:
-            # Offline mode has no remote peer to accept the request.  Preserve
+            # Offline mode has no remote peer to accept the request. Preserve
             # an existing recommendation as a local outgoing request only;
             # never synthesize a fake player row without profile data.
             if row is not None and _as_int(row.get("status")) == ADD:
