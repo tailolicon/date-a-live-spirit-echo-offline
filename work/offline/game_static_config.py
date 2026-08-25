@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Read the small slice of 1.37 static data needed by the offline server.
+"""Read the 1.37 static data used by the offline server.
 
 The original game keeps its Lua tables in the APK behind the same F8/8B/2D
-wrapper used by the hotpatch tooling.  Keeping progression rules sourced from
-those tables prevents the local server from inventing EXP/cost values.
+wrapper used by the hotpatch tooling. Keeping economy/progression rules sourced
+from those tables prevents the local server from inventing costs or rewards.
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def _match_brace(src: str, start: int) -> int:
 
 
 def _indexed_block(src: str, key: int) -> str | None:
-    match = re.search(rf"(?m)^\s*\[{int(key)}\]\s*=\s*\{{", src)
+    match = re.search(rf"\[{int(key)}\]\s*=\s*\{{", src)
     if match is None:
         return None
     start = src.find("{", match.start())
@@ -115,6 +115,45 @@ def _array_pairs(src: str | None) -> list[dict[str, int]]:
             if cid > 0 and num > 0:
                 result.append({"id": cid, "num": num})
     return result
+
+
+def _map_costs(src: str | None) -> list[dict[str, int]]:
+    if not src:
+        return []
+    result: list[dict[str, int]] = []
+    for cid, num in re.findall(r"\[(\d+)\]\s*=\s*(\d+)\s*,?", src):
+        cid_i, num_i = int(cid), int(num)
+        if cid_i > 0 and num_i > 0:
+            result.append({"id": cid_i, "num": num_i})
+    return result
+
+
+def _reward_rows(src: str | None) -> list[dict[str, int]]:
+    if not src:
+        return []
+    result: list[dict[str, int]] = []
+    for match in re.finditer(r"\[(\d+)\]\s*=\s*\{", src):
+        start = src.find("{", match.start())
+        child = src[start:_match_brace(src, start)]
+        cid = _int_field(child, "id")
+        minimum = _int_field(child, "min", _int_field(child, "num"))
+        maximum = _int_field(child, "max", minimum)
+        weight = _int_field(child, "weight", 10000)
+        if cid > 0 and maximum > 0:
+            result.append({
+                "id": cid,
+                "min": max(0, minimum),
+                "max": max(maximum, minimum),
+                "weight": max(0, min(10000, weight)),
+            })
+    return result
+
+
+def _top_level_blocks(src: str):
+    # Generated secondary tables use exactly four spaces for top-level keys.
+    for match in re.finditer(r"(?m)^    \[(\d+)\]\s*=\s*\{", src):
+        start = src.find("{", match.start())
+        yield int(match.group(1)), src[match.start():_match_brace(src, start)]
 
 
 class GameStaticConfig:
@@ -186,6 +225,8 @@ class GameStaticConfig:
             "paint": _int_field(block, "paint"),
             "changeType": _bool_field(block, "changeType"),
             "conditionHeroQuality": _int_field(condition or "", "heroQuality"),
+            "angelLevelId": _int_field(block, "AngelLevelId"),
+            "openAngelStrengthen": _int_field(block, "openAngelStrengthen"),
         }
 
     def progress_cost(self, progress_id: int) -> list[dict[str, int]] | None:
@@ -218,6 +259,112 @@ class GameStaticConfig:
 
     def skin_exists(self, skin_cid: int) -> bool:
         return self.block("HeroSkin", skin_cid) is not None
+
+    def angel_awake_cost(self, hero_cid: int, angel_level: int) -> list[dict[str, int]] | None:
+        hero_block = self.block("Hero", hero_cid)
+        wake = _named_block(hero_block or "", "angelWakeCons")
+        row = _indexed_block(wake or "", angel_level)
+        return _map_costs(row) if row is not None else None
+
+    @lru_cache(maxsize=1)
+    def _angel_skill_index(self) -> dict[tuple[int, int, int, int], dict[str, Any]]:
+        result: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+        for node_id, block in _top_level_blocks(self.table("AngelSkillTree")):
+            hero_id = _int_field(block, "heroId")
+            skill_type = _int_field(block, "skillType")
+            pos = _int_field(block, "pos")
+            lvl = _int_field(block, "lvl")
+            if hero_id <= 0 or skill_type <= 0 or pos <= 0 or lvl <= 0:
+                continue
+            result[(hero_id, skill_type, pos, lvl)] = {
+                "id": node_id,
+                "heroId": hero_id,
+                "skillType": skill_type,
+                "pos": pos,
+                "lvl": lvl,
+                "needSkillPoint": max(0, _int_field(block, "needSkillPiont")),
+                "needHeroLvl": max(0, _int_field(block, "needHeroLvl")),
+                "needAngelLvl": max(0, _int_field(block, "needAngelLvl")),
+                "frontCondition": _array_ints(_named_block(block, "frontCondition")),
+            }
+        return result
+
+    def angel_skill(self, hero_cid: int, skill_type: int, pos: int, lvl: int) -> dict[str, Any] | None:
+        return self._angel_skill_index().get((int(hero_cid), int(skill_type), int(pos), int(lvl)))
+
+    def angel_skill_by_id(self, node_id: int) -> dict[str, Any] | None:
+        for node in self._angel_skill_index().values():
+            if int(node["id"]) == int(node_id):
+                return node
+        return None
+
+    def passive_slot(self, pos: int) -> dict[str, int] | None:
+        block = self.block("AngelPassiveSkillGrooves", pos)
+        if not block:
+            return None
+        return {
+            "pos": int(pos),
+            "needAngelLvl": max(0, _int_field(block, "AngelLvl")),
+            "needHeroLvl": max(0, _int_field(block, "needHeroLvl")),
+        }
+
+    @lru_cache(maxsize=1)
+    def _angel_strengthen_index(self) -> dict[tuple[int, int, int], dict[str, Any]]:
+        result: dict[tuple[int, int, int], dict[str, Any]] = {}
+        for row_id, block in _top_level_blocks(self.table("AngelStrengthen")):
+            hero_id = _int_field(block, "heroId")
+            skill_type = _int_field(block, "skillType")
+            lvl = _int_field(block, "lvl")
+            if hero_id <= 0 or skill_type <= 0 or lvl <= 0:
+                continue
+            result[(hero_id, skill_type, lvl)] = {
+                "id": row_id,
+                "cost1": _array_pairs(_named_block(block, "needCost")),
+                "cost2": _array_pairs(_named_block(block, "needCost2")),
+                "frontCondition": _array_ints(_named_block(block, "frontCondition")),
+            }
+        return result
+
+    def angel_strengthen_cost(self, hero_cid: int, skill_type: int, lvl: int, cost_type: int) -> list[dict[str, int]] | None:
+        row = self._angel_strengthen_index().get((int(hero_cid), int(skill_type), int(lvl)))
+        if row is None:
+            return None
+        return list(row["cost2" if int(cost_type) == 2 else "cost1"])
+
+    def dungeon_definition(self, level_cid: int) -> dict[str, Any] | None:
+        block = self.block("DungeonLevel", level_cid)
+        if not block:
+            return None
+        next_level = int(level_cid) + 1
+        next_block = self.block("DungeonLevel", next_level)
+        if next_block is None or int(level_cid) not in _array_ints(_named_block(next_block, "preLevelId")):
+            next_level = 0
+        return {
+            "cid": int(level_cid),
+            "playerLvl": max(0, _int_field(block, "playerLv")),
+            "fightCount": max(0, _int_field(block, "fightCount")),
+            "isFree": _bool_field(block, "isFree"),
+            "cost": _array_pairs(_named_block(block, "cost")),
+            "rewardDrop": max(0, _int_field(block, "reward")),
+            "firstRewardDrop": max(0, _int_field(block, "firstReward")),
+            "rewardMultipleDrop": max(0, _int_field(block, "rewardMultiple")),
+            "preLevels": _array_ints(_named_block(block, "preLevelId")),
+            "nextLevelCid": next_level,
+        }
+
+    def dungeon_drop(self, drop_id: int) -> dict[str, list[dict[str, int]]] | None:
+        if int(drop_id) <= 0:
+            return {"fixed": [], "basic": []}
+        block = self.block("Drop", drop_id)
+        if block is None:
+            return None
+        use_profit = _named_block(block, "useProfit")
+        fixed = _named_block(use_profit or "", "fix")
+        basic = _named_block(use_profit or "", "basic")
+        return {
+            "fixed": _reward_rows(_named_block(fixed or "", "items")),
+            "basic": _reward_rows(_named_block(basic or "", "items")),
+        }
 
 
 _CONFIG: GameStaticConfig | None = None
