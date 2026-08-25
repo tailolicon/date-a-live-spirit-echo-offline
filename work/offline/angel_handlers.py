@@ -353,7 +353,6 @@ def _equip_passive(state: dict[str, Any], request: dict[str, Any], cfg: GameStat
             "passiveSkillInfo": {"pos": requested_pos, "skillId": _as_int((current or {}).get("skillId"))},
         }))
     changed = False
-    # A passive may occupy only one slot. Clear its previous slot first.
     for row in rows:
         if isinstance(row, dict) and _as_int(row.get("skillId")) == skill_id and _as_int(row.get("pos")) != requested_pos:
             row["skillId"] = 0
@@ -426,8 +425,8 @@ def _breakthrough(state: dict[str, Any], request: dict[str, Any], cfg: GameStati
     empty = encode_response(HERO_SPIRIT_REQ_UPGRADE_ANGLE_SPIRIT, {})
     if hero is None or cost_id <= 0:
         return HandlerResult(empty)
-    spirit = _spirit_info(state)
-    current = _angle_break_level(spirit, hero_cid)
+    raw_spirit = state.get("spiritInfo")
+    current = _angle_break_level(raw_spirit if isinstance(raw_spirit, dict) else {}, hero_cid)
     next_stage = cfg.angel_break_stage(hero_cid, current + 1)
     if next_stage is None:
         return HandlerResult(empty)
@@ -437,6 +436,7 @@ def _breakthrough(state: dict[str, Any], request: dict[str, Any], cfg: GameStati
     costs = options[cost_id - 1]
     if not costs or not consume_cids(state, costs):
         return HandlerResult(empty)
+    spirit = _spirit_info(state)
     new_level = current + 1
     _set_angle_break_level(spirit, hero_cid, new_level)
     hero["breakLv"] = new_level
@@ -452,9 +452,6 @@ def _breakthrough(state: dict[str, Any], request: dict[str, Any], cfg: GameStati
 
 
 def _add_bit(state: dict[str, Any], request: dict[str, Any], cfg: GameStaticConfig) -> HandlerResult:
-    # Legacy request retained by the client. Modern skill pages mutate through
-    # 1038; acknowledging only valid owned-hero nodes avoids inventing a second
-    # progression state that the current client never consumes.
     hero = _find_hero_by_sid(state, request.get("heroId"))
     node = cfg.angel_skill_by_id(_as_int(request.get("cid")))
     valid = hero is not None and node is not None and _as_int(node.get("heroId")) == _as_int(hero.get("cid"))
