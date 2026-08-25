@@ -32,7 +32,12 @@ class SignHandlerTests(unittest.TestCase):
         infos = response(sign.SIGN_REQ_SIGN_INFOS, payload)[root]
         self.assertEqual([row["id"] for row in infos], [1, 2, 3, 4])
         self.assertTrue(all(row["awardType"] == [sign.CANNOT_SIGN] for row in infos))
-        self.assertEqual(state["signInfos"], infos)
+        # Empty repeated protobuf fields are intentionally omitted on the wire;
+        # the save still retains concrete empty lists for local state logic.
+        self.assertTrue(all(row.get("supplyDays", []) == [] for row in infos))
+        self.assertTrue(all(row["supplyDays"] == [] for row in state["signInfos"]))
+        for persisted, decoded in zip(state["signInfos"], infos):
+            self.assertEqual({k: v for k, v in persisted.items() if k != "supplyDays"}, decoded)
 
     def test_configured_sign_is_claimable_and_reward_is_idempotent(self) -> None:
         state = {
