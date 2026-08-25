@@ -57,7 +57,7 @@ jobs:
           emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eu
             mkdir -p e2e work/offline/logs
             adb root || true
             adb wait-for-device
