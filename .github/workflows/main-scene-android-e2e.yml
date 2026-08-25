@@ -64,7 +64,13 @@ jobs:
             sleep 2
             echo "ABI=$(adb shell getprop ro.product.cpu.abilist | tr -d '\r')" | tee e2e/device.txt
             adb shell getprop ro.build.version.release | tr -d '\r' | sed 's/^/Android=/' | tee -a e2e/device.txt
-            aapt dump badging work/apk/base-offline.apk > e2e/apk-badging.txt
+            SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+            AAPT="$(find "$SDK_ROOT/build-tools" -type f -name aapt | sort -V | tail -1)"
+            if [ -n "$AAPT" ]; then
+              "$AAPT" dump badging work/apk/base-offline.apk > e2e/apk-badging.txt
+            else
+              echo 'aapt not found; continuing without APK badging dump' > e2e/apk-badging.txt
+            fi
 
             adb install -r work/apk/base-offline.apk 2>&1 | tee e2e/install.txt
             adb shell pm path com.datealive.action.rpg | tee e2e/package-paths.txt
