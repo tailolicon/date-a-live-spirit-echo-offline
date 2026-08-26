@@ -29,23 +29,109 @@ def patch_network(src: str) -> str:
     anchor = "    TFDirector:dispatchProtocolWith(nType, tTemp)"
     assert src.count(anchor) == 1, "NetWork dispatch anchor missing/ambiguous"
 
+    # File-local so the descriptor table is required and unpacked once, not
+    # once per received packet (the login fan-out alone is ~110 of them).
+    head = "local NetHelper = require(\"TFFramework.net.NetHelper\")"
+    assert src.count(head) == 1, "NetHelper require anchor missing/ambiguous"
+    src = src.replace(
+        head, head + "\nlocal __dalProtoDesc, __dalDescCache = nil, nil", 1)
+
     block = f'''    -- {MARKER}
-    -- Empty repeated protobuf fields are absent on the wire. This client then
-    -- decodes them as nil, but these login handlers require Lua tables.
-    local __dalEmptyLists = {{
-        [280]  = {{"switchs"}},
-        [5663] = {{"favorList"}},
-        [4869] = {{"eTypes"}},
-        [5145] = {{"configList"}},
-        [5120] = {{"mainAdBoardInfo"}},
-        [3010] = {{"uiChange"}},
+    -- An empty repeated field is simply absent on the wire, and the client's
+    -- reader turns "absent" into NULL, which PackStruct maps to nil (not {{}}).
+    -- Plenty of handlers then call ipairs() on it unconditionally. Rather than
+    -- chase one crash at a time, read the message's own descriptor and hand
+    -- back an empty table for any repeated field that came back nil.
+    --
+    -- Crucially this is done *lazily*, through __index, instead of writing the
+    -- keys in. Several handlers gate on the response being empty at all -
+    -- MainLayer:onRecyclingItems does `if next(data)` - and materialising the
+    -- fields eagerly makes an all-empty response look populated, which pops an
+    -- empty dialog on every login. next()/pairs()/# ignore metatables, so the
+    -- gate still sees {{}} while ipairs(data.field) gets its table.
+    --
+    -- protos_s2c entries are {{callback, types, names}}; types[i] and
+    -- names[i] line up, except inside a nested spec where names[1] is the
+    -- struct's own name and the fields start at 2 - hence the offset.
+    local __dalRepeatScalar = {{
+        pv4 = true, pv8 = true, tv4 = true, tv8 = true,
+        ts = true, av4 = true, av8 = true, an1 = true,
     }}
-    local __dalFields = __dalEmptyLists[nType]
-    if __dalFields then
-        for _, __dalKey in ipairs(__dalFields) do
-            if tTemp[__dalKey] == nil then
-                tTemp[__dalKey] = {{}}
+
+    local function __dalDefer(node, key)
+        local mt = getmetatable(node)
+        if mt == nil then
+            mt = {{__dalKeys = {{}}}}
+            mt.__index = function(t, k)
+                if mt.__dalKeys[k] then
+                    local fresh = {{}}
+                    rawset(t, k, fresh)   -- read once, then it is a real field
+                    return fresh
+                end
+                return nil
             end
+            setmetatable(node, mt)
+        elseif mt.__dalKeys == nil then
+            node[key] = {{}}              -- someone else owns this metatable
+            return
+        end
+        mt.__dalKeys[key] = true
+    end
+
+    local function __dalFillFields(types, names, offset, node)
+        if type(types) ~= "table" or type(names) ~= "table"
+           or type(node) ~= "table" then
+            return
+        end
+        for i = 1, #types do
+            local tspec = types[i]
+            local nspec = names[i + offset]
+            if type(tspec) == "table" then
+                local key = nil
+                if type(nspec) == "table" and type(nspec[2]) == "table" then
+                    key = nspec[2][1]
+                end
+                if type(key) == "string" then
+                    local child = rawget(node, key)
+                    if tspec[1] then
+                        if child == nil then
+                            __dalDefer(node, key)
+                        elseif type(child) == "table" then
+                            for _, item in ipairs(child) do
+                                __dalFillFields(tspec[2], nspec[2], 1, item)
+                            end
+                        end
+                    elseif type(child) == "table" then
+                        __dalFillFields(tspec[2], nspec[2], 1, child)
+                    end
+                end
+            elseif type(nspec) == "string" and __dalRepeatScalar[tspec]
+                   and rawget(node, nspec) == nil then
+                __dalDefer(node, nspec)
+            end
+        end
+    end
+
+    if __dalProtoDesc == nil then
+        local __dalOk, __dalMod = pcall(require, "lua.net.protos_s2c")
+        __dalProtoDesc = (__dalOk and type(__dalMod) == "table") and __dalMod or false
+        __dalDescCache = {{}}
+    end
+    if __dalProtoDesc and type(tTemp) == "table" then
+        local __dalDesc = __dalDescCache[nType]
+        if __dalDesc == nil then
+            __dalDesc = false
+            local __dalMake = __dalProtoDesc[nType]
+            if __dalMake then
+                local __dalOk, __dalOut = pcall(__dalMake)
+                if __dalOk and type(__dalOut) == "table" then
+                    __dalDesc = __dalOut
+                end
+            end
+            __dalDescCache[nType] = __dalDesc
+        end
+        if __dalDesc then
+            __dalFillFields(__dalDesc[2], __dalDesc[3], 0, tTemp)
         end
     end
 
