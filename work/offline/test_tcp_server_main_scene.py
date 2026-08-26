@@ -22,7 +22,7 @@ class MainSceneDungeonStateTests(unittest.TestCase):
         #   {cid=101101, fightCount=1, win=true, buyCount=0, freeCount=0}
         self.assertEqual(
             body.hex(),
-            "0a100a0e0a0c08ed95061801200128003000",
+            "0a0e0a0c08ed95061801200128003000",
         )
 
     def test_explicit_empty_passed_levels_keeps_fail_safe_bootstrap(self) -> None:

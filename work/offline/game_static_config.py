@@ -411,6 +411,26 @@ class GameStaticConfig:
             "basic": _reward_rows(_named_block(basic or "", "items")),
         }
 
+    def summon_hot_loop_ids(self) -> dict[int, int]:
+        """Lowest valid loopId per loopType in SummonLoop.
+
+        SummonDataMgr:getHotSummon indexes summonLoop_[loopType][loopId] and
+        then walks the row's summonId list with no nil guard, so an order of 0 -
+        which is what a zero-filled s2c 3343 carries - takes MainScene's summon
+        panel down. Loop ids are 1-based in every shipped row; read them rather
+        than assume it.
+        """
+        loops: dict[int, int] = {}
+        for _, block in _top_level_blocks(self.table("SummonLoop")):
+            loop_type = _int_field(block, "loopType", -1)
+            loop_id = _int_field(block, "loopId", -1)
+            if loop_type < 0 or loop_id <= 0:
+                continue
+            current = loops.get(loop_type)
+            if current is None or loop_id < current:
+                loops[loop_type] = loop_id
+        return loops
+
 
 _CONFIG: GameStaticConfig | None = None
 

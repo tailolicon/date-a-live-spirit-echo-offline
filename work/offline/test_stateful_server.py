@@ -144,7 +144,7 @@ class StatefulHandlerTests(unittest.TestCase):
         self.assertEqual(changed["stance"], ["h1"])
 
     def test_dungeon_bootstrap_stays_byte_compatible(self) -> None:
-        self.assertEqual(sh.encode_dungeon_level_info({}).hex(), "0a100a0e0a0c08ed95061801200128003000")
+        self.assertEqual(sh.encode_dungeon_level_info({}).hex(), "0a0e0a0c08ed95061801200128003000")
 
 
 class TcpServerCoreTests(unittest.TestCase):

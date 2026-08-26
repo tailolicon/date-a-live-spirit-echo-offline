@@ -11,6 +11,7 @@ from copy import deepcopy
 import time
 from typing import Any
 
+import game_static_config
 from player_save import FIRST_PLOT_LEVEL, save as persist
 from proto_codec import enc_bool_field, enc_msg_field, enc_varint_field
 from protocol_schema import decode_request, encode_response
@@ -36,6 +37,7 @@ STORE_SELL_INFO = 2565
 STORE_SELL_GOODS_PREVIEW = 2567
 STORE_GET_STORE_INFO = 2569
 DUNGEON_GET_LEVEL_INFO = 1796
+SUMMON_REQ_HOT_SUMMON_INFO = 3343
 
 STATEFUL_PROTOCOLS = frozenset({
     ITEM_USE_ITEM,
@@ -58,6 +60,7 @@ STATEFUL_PROTOCOLS = frozenset({
     STORE_SELL_GOODS_PREVIEW,
     STORE_GET_STORE_INFO,
     DUNGEON_GET_LEVEL_INFO,
+    SUMMON_REQ_HOT_SUMMON_INFO,
 })
 
 
@@ -98,8 +101,43 @@ def encode_dungeon_level_info(state: dict[str, Any]) -> bytes:
         records += enc_msg_field(1, info)
     if not records:
         return encode_dungeon_level_info({"passedLevels": [FIRST_PLOT_LEVEL]})
-    level_infos = enc_msg_field(1, bytes(records))
-    return enc_msg_field(1, level_infos)
+    # s2c 1796 field 1 is {false,{{true,{...}}}}: a plain submessage whose only
+    # field is the repeated levelInfo list. Repeated elements are emitted as
+    # one tag+len+body each at that field number, so `records` is already the
+    # submessage body - wrapping it again puts a submessage where the decoder
+    # expects levelInfo.cid and it bails with "not the same type at 1 v4".
+    return enc_msg_field(1, bytes(records))
+
+
+# SummonLoop loopType ids, per EC_SummonLoopType in the client.
+SUMMON_LOOP_ROLE = 1
+SUMMON_LOOP_EQUIPMENT = 2
+HOT_SUMMON_WINDOW = 7 * 24 * 3600
+
+
+def hot_summon_info(state: dict[str, Any]) -> dict[str, Any]:
+    """s2c 3343, with loop orders that actually name a SummonLoop row.
+
+    SummonDataMgr:getHotSummon does summonLoop_[loopType][loopId] and then
+    ipairs()es the row's summonId with no nil guard, so the zero-filled default
+    raises "attempt to index local 'loopCfg'" as soon as MainScene builds the
+    summon panel. Take the lowest shipped loopId for each type instead; fall
+    back to 1 (the first row of every shipped loopType) if the table cannot be
+    read at all.
+    """
+    try:
+        loops = game_static_config.config().summon_hot_loop_ids()
+    except Exception:
+        loops = {}
+    end_time = int(state.get("hotSummonEndTime") or (time.time() + HOT_SUMMON_WINDOW))
+    return {
+        "heroHotSummonOrder": int(loops.get(SUMMON_LOOP_ROLE, 1)),
+        "heroHotSummonTime": end_time,
+        "equipHotSummonOrder": int(loops.get(SUMMON_LOOP_EQUIPMENT, 1)),
+        "equipHotSummonTime": end_time,
+        "hotHeroSummonScore": int(state.get("hotHeroSummonScore", 0) or 0),
+        "hotEquipSummonScore": int(state.get("hotEquipSummonScore", 0) or 0),
+    }
 
 
 def _formation_by_type(state: dict[str, Any], formation_type: int) -> dict[str, Any]:
@@ -501,6 +539,8 @@ def response_for(proto: int, state: dict[str, Any], body: bytes = b"") -> tuple[
         return encode_response(proto, {"success": changed, "rewards": rewards}), changed
     if proto == DUNGEON_GET_LEVEL_INFO:
         return encode_dungeon_level_info(state), False
+    if proto == SUMMON_REQ_HOT_SUMMON_INFO:
+        return encode_response(proto, hot_summon_info(state)), False
     if proto == PLAYER_OPERATE_FORMATION:
         request = decode_request(proto, body)
         formation = operate_formation(state, request)
