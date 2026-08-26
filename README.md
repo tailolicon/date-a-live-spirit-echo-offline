@@ -4,13 +4,14 @@ Personal research/preservation project: run the (online-only) mobile game
 **Date A Live: Spirit Echo 1.37** single-player against a local server, on an
 x86 MuMu emulator.
 
-**Current state:** the client clears server select, logs into the local game
-server, completes the full ~104-message login fan-out and switches to
-MainScene. MainScene itself renders black and the process has exited on one of
-two runs after reaching it — that is the open problem, and it is about the
-*content* of the generated replies, not the protocol.
+**Current state: playable.** The client clears server select, logs into the
+local game server, completes the ~110-message login fan-out, renders MainScene,
+runs the opening tutorial, and opens the Volume 1 instance map with stage 1‑1
+already cleared from the save. Heartbeats hold, and a full login produces no Lua
+errors. What is thin is *content*: most modules still answer with zeros, so
+progression beyond the starter state is not persisted yet.
 
-Read `docs/PROTOCOL.md` first. It has the wire format, the two findings that
+Read `docs/PROTOCOL.md` first. It has the wire format, the findings that
 unblocked this, and the exact addresses in the binary.
 
 ---
@@ -113,10 +114,26 @@ Current patches:
 |---|---|
 | `lua/UtilHelper.lua` | account URLs → `10.0.2.2:18099`; `DEBUG_LOG = true` (release builds stub out `print`/`dump`) |
 | `lua/gamedata/CommonManager.lua` | `setEncodeEnable(false)` to drop the packet cipher; connect tracing |
-| `lua/net/NetWork.lua` | prints the outstanding login-message set |
+| `lua/net/NetWork.lua` | prints the outstanding login-message set; defers `{}` for empty repeated fields (see below) |
 | `TFFramework/net/TFClientNet.lua` | receive-path tracing |
 
 `hotpatch.py revert` removes them.
+
+### Empty repeated fields
+
+An empty repeated field is simply absent on the wire, and the client's reader
+turns "absent" into NULL, which `PackStruct` maps to **nil**, not `{}`. Handlers
+that `ipairs()` such a field unconditionally then crash — `RechargeDataMgr` did,
+which took MainLayer's red-dot check down with it.
+
+`hotpatch_main_scene.py` reads the message's own descriptor from
+`protos_s2c.lua` and hands back an empty table for any repeated field that came
+back nil. It does this **lazily, through `__index`**, because several handlers
+gate on the response being empty at all — `MainLayer:onRecyclingItems` does
+`if next(data)`. Writing the keys in eagerly made every login pop an empty
+"Recycle Item" dialog that re-requested itself on Confirm. `next`, `pairs` and
+`#` ignore metatables, so the gate still sees `{}` while
+`ipairs(data.field)` gets its table.
 
 ## The two things that mattered
 
@@ -134,19 +151,45 @@ Current patches:
 
 Both are covered in detail in `docs/PROTOCOL.md`.
 
+## Validating a reply before you ship it
+
+The client's decoder never rejects a bad body. It walks the descriptor in
+order, and any field whose tag does not match the expected position is silently
+set to NULL — every field after it is lost too. The failure then surfaces
+somewhere else entirely, minutes later, as a nil index inside a DataMgr.
+
+That is exactly how MainScene came to be black: the s2c 1796 body wrapped the
+repeated `levelInfos` list in one submessage too many, so `FubenDataMgr`
+received nothing and MainScene never finished loading.
+
+`work/offline/proto_validate.py` mirrors that decoder. Run it directly to check
+every generated body, or let the tests do it:
+
+```bash
+python work/offline/proto_validate.py     # all 947 generated s2c bodies
+python -m pytest work/offline work/tools  # + every stateful handler response
+```
+
+**Any new handler body should go through `proto_validate.validate()`** — the
+test in `test_proto_validate.py` already sweeps every `response_for()`, so a new
+protocol added to a `*_PROTOCOLS` set is covered automatically.
+
+`pip install lupa` additionally enables the tests that run the generated Lua
+hot-patch in a real Lua VM; they skip cleanly without it.
+
 ## Where to pick up
 
-- **MainScene is black / unstable.** Login is solid (heartbeats held for
-  minutes), so look at what the generated zero-filled replies leave nil.
-  `proto_gen.py` fills scalars with 0 and recurses into non-repeated
-  submessages; repeated fields come back empty, which is where most of the
-  remaining nils will be.
-- **Two known non-fatal handler errors** from zero-valued config ids:
-  `LeagueDataMgr.lua:926` (`bossCfg` nil) and `WorldRoomDataMgr.lua:447`
-  (`controler` nil).
-- **Nothing persists** beyond `work/offline/saves/player.json`; every module
-  answers with zeros on each login. Real state needs per-proto handlers in
-  `tcp_server.py` backed by the save.
+- **Progression is not persisted** past what `player_save.py` models. Modules
+  outside the `*_handlers.py` set still answer with generated zeros, so their
+  state resets on every login.
+- **Empty repeated fields are handled generically now.** The NetWork hot-patch
+  reads each message's own descriptor and defers an empty table for any
+  repeated field that came back nil (see below), so that class of crash should
+  not need per-proto patching any more.
+- **Zero-valued config ids are not.** A scalar id of 0 that has to name a real
+  row in a static table is still handled case by case — `hot_summon_info()` in
+  `stateful_handlers.py` shows the preferred shape: read the real id out of the
+  shipped table via `game_static_config.py` rather than inventing one.
 
 ## Scope
 

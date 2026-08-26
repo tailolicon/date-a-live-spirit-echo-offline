@@ -123,7 +123,7 @@ toggles +0x9A. Since disabling it works, it was never reversed further.
 
 `MainPlayer:onLogin` walks every DataMgr, each firing its own request and
 registering the reply id in `NetWork:waitLoginS2CMsg`. The scene only switches
-once `__waitLoginMsg` is empty — about 104 messages. `proto_gen.py` generates a
+once `__waitLoginMsg` is empty — about 110 messages. `proto_gen.py` generates a
 minimal body per proto straight from `protos_s2c.lua`:
 
 - scalars → zero / empty string,
@@ -135,6 +135,66 @@ handlers that compare them raise (`LeagueDataMgr:checkSelfInUnion`). Replying
 with a blanket empty body is worse still — it takes the client down with a
 SIGSEGV inside luajit.
 
+## A wrong body is silent, and that is the real hazard
+
+`NetOP:UnpackSingleVaule` is not a protobuf parser. At each position it peeks
+the next tag and compares it against `TypeCount(i, type)` = `i * 8 | wiretype`.
+Three consequences, all of which have cost time here:
+
+1. **A tag that does not match is not an error.** The field becomes NULL and
+   *nothing is consumed*, so every later field is lost too. No exception, no log.
+2. **A matching field number with the wrong wire type** prints
+   `[error]not the same type at ...` — and then still NULLs the field. That
+   print is the only direct signal, and only when `DEBUG_LOG` is on.
+3. **Nesting is positional.** `{false,{...}}` is one submessage; `{true,{...}}`
+   is a repeated one, emitted as tag+len+body *per element at the same field
+   number*. Wrapping a repeated list in an extra submessage — the easy mistake —
+   puts a submessage where the first scalar belongs and trips case 2.
+
+This is what black-screened MainScene. The s2c 1796 body built the passed-level
+list as `field1{ field1{ field1{levelInfo} } }` instead of
+`field1{ field1{levelInfo} }`, so the client logged
+
+```
+[error]not the same type at  1  v4  {v4,pv4,v4,b,v4,v4}  10  8  14
+```
+
+(`nType=10` = field 1 wiretype 2, `nCurType=8` = field 1 varint) and
+`FubenDataMgr:onRecvLevelInfo` then died on `table index is nil`. Nothing about
+the symptom pointed at the encoder.
+
+`work/offline/proto_validate.py` mirrors this decoder so the mistake fails a
+test instead of a play session. It reports wire-type clashes, unread trailing
+bytes and truncation, and `test_proto_validate.py` runs it over all 947
+generated bodies plus every stateful handler response.
+
+## Empty repeated fields decode to nil, not {}
+
+An empty repeated field is absent on the wire; the reader turns absent into
+`NULL`, and `NetOP:PackStruct` maps `NULL` to **nil**. Handlers that call
+`ipairs()` on such a field unconditionally therefore crash.
+
+The NetWork hot-patch reads each message's descriptor from `protos_s2c.lua` and
+supplies an empty table for any repeated field that came back nil — **lazily,
+via `__index`**. Eager filling breaks handlers that gate on the whole response
+being empty (`MainLayer:onRecyclingItems` does `if next(data)`), which showed up
+as an empty "Recycle Item" dialog on every login. `next`, `pairs` and `#` ignore
+metatables, so the gate still sees `{}` while `ipairs(data.field)` gets a table.
+
+## Zero-valued ids that must name a real row
+
+Separate class, still handled case by case. A generated `0` is a valid varint
+but not a valid config id, and the client indexes static tables with it
+unguarded. Read the real value out of the shipped table
+(`work/offline/game_static_config.py`) rather than inventing one:
+
+| Proto | Field | Symptom | Fix |
+|---|---|---|---|
+| 3343 | `heroHotSummonOrder` / `equipHotSummonOrder` | `SummonDataMgr:560 attempt to index local 'loopCfg'` | lowest `loopId` per `loopType` from `SummonLoop` |
+| 3010 | `wearId` | no `Uichange` row | `100001`, the bundled `DefaultMainLayer` |
+| 6824 | `roomType` | no controller | set nil to take the no-room branch |
+| 8501 | `curBoss.curDungeon` | no `HuntingLevel` row | do not dispatch (guild hunting opens at Lv.4) |
+
 ## Running it
 
 `PLAY.bat` → `work/offline/play_offline.py`: hot-patch, start
@@ -143,12 +203,8 @@ Frida, no adb reverse, no APK rebuild.
 
 ## Known remaining issues
 
-- MainScene renders black and the process has exited on one of two runs after
-  reaching it. The login pipeline itself is stable (heartbeats held for minutes
-  on the good run), so this is about the *content* of the generated replies and
-  the main-scene assets, not the protocol.
-- Two non-fatal handler errors from zero-valued config ids:
-  `LeagueDataMgr.lua:926` (`bossCfg` nil) and `WorldRoomDataMgr.lua:447`
-  (`controler` nil).
-- Nothing is persisted yet beyond `work/offline/saves/player.json`; every
-  module answers with zeros on each login.
+- Most modules outside `work/offline/*_handlers.py` still answer with generated
+  zeros, so their state resets on each login. `player_save.py` only models what
+  those handlers need.
+- `[LUA ERROR] function refid '22'/'25' does not reference a Lua function` at
+  startup. Non-fatal, fires before login, not yet traced.
