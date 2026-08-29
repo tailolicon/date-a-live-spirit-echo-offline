@@ -4,12 +4,15 @@ Personal research/preservation project: run the (online-only) mobile game
 **Date A Live: Spirit Echo 1.37** single-player against a local server, on an
 x86 MuMu emulator.
 
-**Current state: playable.** The client clears server select, logs into the
-local game server, completes the ~110-message login fan-out, renders MainScene,
-runs the opening tutorial, and opens the Volume 1 instance map with stage 1‑1
-already cleared from the save. Heartbeats hold, and a full login produces no Lua
-errors. What is thin is *content*: most modules still answer with zeros, so
-progression beyond the starter state is not persisted yet.
+**Current state: playable, and the story is enterable.** The client clears
+server select, logs into the local game server, completes the ~110-message
+login fan-out, renders MainScene, and runs Volume 1: fights resolve in the real
+battle scene, story scripts play to their settlement, clears persist with their
+stars, and clearing a stage pays the player EXP that unlocks the next one.
+Summoning resolves against the shipped pools and the spirits it hands out join
+the roster ready to fight. What is still thin is *breadth*: the live-service
+modules outside `*_handlers.py` answer with descriptor-shaped zeros, so their
+state resets on every login.
 
 Read `docs/PROTOCOL.md` first. It has the wire format, the findings that
 unblocked this, and the exact addresses in the binary.
@@ -84,6 +87,18 @@ work/offline/
   play_offline.py           launcher (PLAY.bat)
   http_server.py            /account/getServerInfo, /login, /querydate, notices
   tcp_server.py             the game server: framing, checksum, padding, handlers
+  dungeon_handlers.py       s2c 1808, the spirits a stage lends you
+  combat_handlers.py        fight start/settlement, drops, player level
+  dating_handlers.py        s2c 1542/1540, visual-novel stages
+  city_dating_handlers.py   s2c 5633.., town stages
+  role_handlers.py          s2c 1281, board girls (a settlement indexes these)
+  summon_handlers.py        s2c 3329, pulls rolled off the shipped SummonPool
+  player_handlers.py        rename + tutorial progress that survives a relog
+  player_info.py            the PlayerInfo body, shared by login and s2c 267
+  hero_stats.py             HeroProgress -> the attr list a hero fights with
+  lua_watch.py              surfaces the client's own Lua errors
+  verify_relog.py           logs in twice on a device; fails if the guide replays
+  coverage_report.py        which protocols a session left on zeros
   proto_gen.py              minimal s2c bodies generated from protos_s2c.lua
   proto_codec.py            protobuf-wire helpers
   player_save.py            work/offline/saves/player.json
@@ -177,19 +192,126 @@ protocol added to a `*_PROTOCOLS` set is covered automatically.
 `pip install lupa` additionally enables the tests that run the generated Lua
 hot-patch in a real Lua VM; they skip cleanly without it.
 
+## Entering a stage
+
+`FubenDataMgr:onRecvFightStart` branches on `DungeonLevel.dungeonType`, and each
+branch waits on a *different* reply. Three of them need data only the server has,
+and each one failed the same way before it was implemented: a structurally valid
+but empty body, the client quietly taking its "nothing here" path, and the stage
+refusing to open with no error anywhere.
+
+| `dungeonType` | What opens | What the server owes it |
+|---|---|---|
+| 1 `FIGHTING` | the battle scene | `s2c 1808` the stage's lent spirits (`dungeon_handlers`), or, at `heroLimitType = 0`, the player's own heroes **with `attr` filled in** (`hero_stats`) |
+| 2 `DATING` | a visual-novel script | `s2c 1542` the script (`dating_handlers`), then `s2c 1540` when it reports its last node |
+| 3 `CITYDATING` | the town map | `s2c 5633` the line's entrances (`city_dating_handlers`) |
+| others | the battle scene | nothing beyond `s2c 1793` |
+
+Two rules cut across all of them:
+
+- **A hero's stats are not derived client-side.** `Property:init` reads the
+  `attr` list verbatim, so a hero sent without one enters battle with 0 max HP.
+  `hero_stats.battle_attributes` builds it from HeroProgress the way the
+  client's own StrengthenResult view reads those rows back.
+- **A stage gates on `DungeonLevel.playerLv`, and a locked node is not even
+  touchable** (`Button_level:setTouchEnabled(enabled)`). So settlement has to
+  actually pay the player EXP (item `500005`) into their level, or the map
+  dead-ends one stage in — the new-player guide included, since it points at
+  1-2 and lets nothing else through.
+
+`test_stage_entry.py` asserts one case per branch against the shipped tables.
+
+## Checking a fix against the client instead of about it
+
+Two of these bugs could not be seen by reading: one only shows on the *second*
+login, the other only when a screen quietly does nothing. `lupa` runs the
+shipped Lua for real, so a fix can be put in front of the code that rejected it:
+
+| Harness | Real client code it runs | What it decides |
+|---|---|---|
+| `test_guide_against_client_lua.py` | `GuideDataMgr` on `BaseDataMgr`/`class.lua`, real `Guide` table | does the tutorial replay after a relog |
+| `test_stage_entry_against_client_lua.py` | `FubenDataMgr`, complete `DungeonLevel`/`Hero`/`DungeonChapter` | is the lent team accepted, is the next stage touchable |
+
+Both are driven with the exact bodies the handlers put on the wire, and both
+carry a case pinning the *old* behaviour, so the harness is known to be able to
+see the bug. Reverting either fix makes them fail - worth re-checking by hand
+after changing one, because a harness that silently parses nothing reports
+success. `verify_relog.py` does the same relog check on a device.
+
+## Finding the next break without playing to it
+
+The client swallows its own Lua errors: it hands them to Bugly and carries on,
+so breakage looks like a screen that stops responding. Two tools make that
+visible instead:
+
+- `lua_watch.py` (started by `PLAY.bat`) tails logcat into
+  `logs/lua_errors.log`, turning a silent hang into a function and line number.
+- `coverage_report.py` reads `logs/tcp.log` and lists which protocols were
+  answered by a real handler, which fell through to descriptor-shaped zeros,
+  and which got no reply at all. Zeros are correct for the live-service modules
+  this server does not model — and they are also where the next stuck feature
+  will be, so that list is the standing to-do list.
+
+```bash
+python work/offline/coverage_report.py
+```
+
+## State the client reports and then forgets
+
+Several features hand their progress to the server and then read it straight
+back on the next login — the server is the only memory they have. Acknowledging
+one of those without recording it does not look like a lost write; it looks like
+the feature replaying itself forever.
+
+| Reported on | Read back on | Kept in the save as |
+|---|---|---|
+| c2s 278 the new-player guide step | the `{-1}` query at login | `newPlayerGuideStep` |
+| c2s 7838 a one-off group guide | c2s 7839 at login | `guideGroupsDone` |
+| c2s 260 the prologue Rename | the next PlayerInfo push | `name` |
+
+`GuideDataMgr:onLogin` is the clearest case: it sends `{-1}`, assigns `__step`
+from whatever s2c 278 answers, and calls the guide over once that step passes
+the `guideType = new_guide` row count. A zero-filled reply means "step 0,
+unfinished" — the whole tutorial, from the top, on every single login.
+
+## Editing the save for testing
+
+`edit_state.py` covers the flags worth setting by hand, and `--item` reaches any
+currency, including the ones with no flag of their own:
+
+```bash
+python work/offline/edit_state.py --list-currencies
+python work/offline/edit_state.py --item 570033=1000 --item 500006=500000
+```
+
+A new save is stocked with every currency the client prices something in —
+summon tickets included — because a module cannot be reached, let alone tested,
+without the currency it charges. The amount is a testing float, not a balance
+decision; the migration only ever raises a balance, never lowers one, and runs
+once. The game shows a balance only when the server pushes it, so relog after
+editing.
+
 ## Where to pick up
 
-- **Progression is not persisted** past what `player_save.py` models. Modules
-  outside the `*_handlers.py` set still answer with generated zeros, so their
-  state resets on every login.
-- **Empty repeated fields are handled generically now.** The NetWork hot-patch
+- **Progression outside the `*_handlers.py` set is not persisted.** Those
+  modules still answer with generated zeros, so their state resets on every
+  login. `coverage_report.py` names them in the order the client actually asks.
+- **Empty repeated fields are handled generically.** The NetWork hot-patch
   reads each message's own descriptor and defers an empty table for any
-  repeated field that came back nil (see below), so that class of crash should
+  repeated field that came back nil (see above), so that class of crash should
   not need per-proto patching any more.
 - **Zero-valued config ids are not.** A scalar id of 0 that has to name a real
-  row in a static table is still handled case by case — `hot_summon_info()` in
-  `stateful_handlers.py` shows the preferred shape: read the real id out of the
-  shipped table via `game_static_config.py` rather than inventing one.
+  row in a static table is still handled case by case — `summon_handlers.py`
+  shows the shape: resolve the id against `game_static_config.py` rather than
+  inventing one, because `getSummonCfg(0)` is a nil index and `0` clears every
+  `if data.x then` guard on the way to it.
+- **The town line's step advances once per stage clear**, not per choice: c2s
+  5635 arrives for both a mid-script option and the final one and the wire
+  cannot tell them apart. That is right at the boundary that matters and wrong
+  for a town whose line spans several stages, which none in Volume 1 do.
+- **Summon rates use the first weight band.** `SummonPool.weight` is a list and
+  which entry a pull indexes is server-side knowledge the client never sees;
+  the numbers are all shipped ones, but the band choice is a guess.
 
 ## Scope
 

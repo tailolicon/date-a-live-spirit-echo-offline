@@ -10,8 +10,11 @@ from typing import Any
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 SAVE_PATH = os.path.join(ROOT, "saves", "player.json")
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 6
 FIRST_PLOT_LEVEL = 101101
+# Past the last new-player guide step, so GuideDataMgr reports it finished.
+# The exact count lives in the Guide table; anything beyond it reads as done.
+NEW_GUIDE_FINISHED = 9999
 GOLD_CID = 500001
 DIAMOND_CID = 500002
 FRIENDSHIP_CID = 500003
@@ -20,7 +23,40 @@ STARTER_HERO_CID = 110101
 STARTER_HERO_SID = "local-110101-1"
 STARTER_HERO_SKIN = 1101011
 STARTER_HERO_QUALITY = 4
-STARTER_RESOURCES = {GOLD_CID: 1_000_000, DIAMOND_CID: 10_000, FRIENDSHIP_CID: 10_000, POWER_CID: 999}
+STARTER_RESOURCES = {GOLD_CID: 1_000_000, DIAMOND_CID: 1_000_000,
+                     FRIENDSHIP_CID: 1_000_000, POWER_CID: 1_000_000}
+
+# Currencies the client shows and spends but that no implemented module hands
+# out yet, so a save that only carries the four starter resources cannot reach
+# the features that price things in them. Every id is EC_SItemType or a summon
+# cost read out of the Summon table; the amounts are a testing float, not a
+# balance decision.
+SPIRIT_EXP_CID = 500006
+FAVOR_CID = 500016
+
+# A flat testing float. These are the currencies the client shows and spends
+# but that no implemented module hands out yet, so a save carrying only the
+# four starter resources cannot reach the features priced in them. Every id is
+# EC_SItemType or a summon cost read out of the Summon table.
+TEST_CURRENCY_STOCK = 1_000_000
+TEST_CURRENCY_CIDS = (
+    500006,   # SPIRITEXP - levelling spirits
+    500014,   # ACTIVITY
+    500016,   # FAVOR
+    500017,   # YOUXIBI - arcade coin
+    500018,   # TIANGONGBI
+    500024,   # ENERGY
+    500025,   # KABALA_ENERGY - airship fuel
+    500030,   # THEATER_COUNT
+    500096,   # TokenMoney
+    570101,   # KABALA_ESSENCE
+    566058,   # summon ticket, first-pull discount
+    570033,   # summon ticket, banner 1
+    570035,   # summon ticket, banner 2
+    570150,   # summon ticket, limited banners
+)
+TEST_CURRENCIES = {cid: TEST_CURRENCY_STOCK for cid in TEST_CURRENCY_CIDS}
+STOCKED_CIDS = tuple(STARTER_RESOURCES) + TEST_CURRENCY_CIDS
 
 
 def resource_item(cid: int, num: int, ct: int = 0) -> dict[str, Any]:
@@ -29,7 +65,8 @@ def resource_item(cid: int, num: int, ct: int = 0) -> dict[str, Any]:
 
 
 def default_resource_items() -> dict[str, dict[str, Any]]:
-    return {str(cid): resource_item(cid, num) for cid, num in STARTER_RESOURCES.items()}
+    stock = {**STARTER_RESOURCES, **TEST_CURRENCIES}
+    return {str(cid): resource_item(cid, num) for cid, num in stock.items()}
 
 
 def default_skill_strategy() -> dict[str, Any]:
@@ -120,6 +157,7 @@ def default_save() -> dict[str, Any]:
         "password": "",
         "items": default_resource_items(),
         "heroes": [starter_hero()],
+        "equipments": [],
         "formations": default_formations(),
         "passedLevels": [FIRST_PLOT_LEVEL],
         "mails": [],
@@ -245,11 +283,23 @@ def normalize_save(data: dict[str, Any] | None) -> dict[str, Any]:
         previous_schema = 0
     migrating_v3 = previous_schema < 3
     migrating_v4 = previous_schema < 4
+    migrating_v5 = previous_schema < 5
+    migrating_v6 = previous_schema < 6
 
     base = default_save()
     base.update(incoming)
     base["schemaVersion"] = SCHEMA_VERSION
     base["items"] = _normalize_items(incoming, default_resource_items())
+    if migrating_v6:
+        # Raise every stocked currency to the testing float, never lowering one
+        # a save already holds more of.
+        by_cid = {int(row.get("cid", 0) or 0): row for row in base["items"].values()}
+        for cid in STOCKED_CIDS:
+            row = by_cid.get(cid)
+            if row is None:
+                base["items"][str(cid)] = resource_item(cid, TEST_CURRENCY_STOCK)
+            else:
+                row["num"] = max(int(row.get("num", 0) or 0), TEST_CURRENCY_STOCK)
 
     raw_heroes = incoming.get("heroes", base.get("heroes", []))
     base["heroes"] = _normalize_heroes(
@@ -275,9 +325,15 @@ def normalize_save(data: dict[str, Any] | None) -> dict[str, Any]:
     if FIRST_PLOT_LEVEL not in clean_passed:
         clean_passed.insert(0, FIRST_PLOT_LEVEL)
     base["passedLevels"] = clean_passed
-    for key in ("mails", "tasks", "friends"):
+    for key in ("mails", "tasks", "friends", "equipments"):
         value = incoming.get(key, base.get(key, []))
         base[key] = [deepcopy(v) for v in value if isinstance(v, dict)] if isinstance(value, list) else []
+    if migrating_v6 and "newPlayerGuideStep" not in base:
+        # A save that has cleared a stage past the first is demonstrably past
+        # the new-player guide. Without this it replays the tutorial exactly
+        # once more - the run whose Skip the server finally records.
+        if len(base["passedLevels"]) > 1 or int(base.get("lvl", 1) or 1) > 1:
+            base["newPlayerGuideStep"] = NEW_GUIDE_FINISHED
     by_cid = {int(v.get("cid", 0)): v for v in base["items"].values()}
     base["gold"] = int(by_cid.get(GOLD_CID, {}).get("num", 0))
     base["diamonds"] = int(by_cid.get(DIAMOND_CID, {}).get("num", 0))

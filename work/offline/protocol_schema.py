@@ -102,6 +102,13 @@ def load_codes(path: str, table_name: str) -> tuple[dict[str, int], dict[int, st
 def _default_value(field: FieldSpec) -> Any:
     if field.repeated:
         return []
+    if field.kind == "message":
+        # A submessage nobody filled in is *absent*, not zero-filled. The client
+        # reads an optional submessage as "there is one" and then looks its ids
+        # up in a static table - HeroInfo.pet goes straight to PetsSkill[cid],
+        # s2c 1793's assist hero to Hero[cid] - so a present-but-empty one is a
+        # nil config row inside the battle scene, not a harmless default.
+        return None
     name = field.name.lower()
     if field.kind in STRING_TYPES:
         return ""
@@ -135,10 +142,22 @@ def _encode_primitive(field_no: int, spec: FieldSpec, value: Any) -> bytes:
 
 
 def encode_fields(fields: tuple[FieldSpec, ...], values: dict[str, Any] | None = None) -> bytes:
+    """Encode one message body.
+
+    A field explicitly mapped to ``None`` is omitted from the wire. The client
+    decoder (``NetOP:UnpackSingleVaule``) peeks the next tag and leaves the
+    read cursor alone when it does not match, so an absent field decodes to
+    NULL - i.e. nil after PackStruct - without shifting the fields after it.
+    That is the only way to say "no value here": a zero-filled submessage is a
+    *present* table to the client, and handlers that gate on its presence
+    (``if serverData.hero then``) then index a config row that does not exist.
+    """
     values = values or {}
     out = bytearray()
     for field_no, spec in enumerate(fields, start=1):
         value = values.get(spec.name, _default_value(spec))
+        if value is None:
+            continue
         if spec.kind == "message":
             if spec.repeated:
                 for entry in value or []:

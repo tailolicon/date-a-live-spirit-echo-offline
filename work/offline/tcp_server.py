@@ -10,16 +10,23 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from player_info import encode_player_info
 from player_save import load_save, save as persist
-from proto_codec import enc_bool_field, enc_msg_field, enc_string_field, enc_varint_field
+from proto_codec import enc_msg_field, enc_varint_field
 import proto_gen
 import angel_handlers
+import city_dating_handlers
 import combat_handlers
+import dating_handlers
+import dungeon_handlers
 import formation_backup_handlers
 import hero_progression_handlers
+import player_handlers
 import progression_handlers
+import role_handlers
 import sign_handlers
 import stateful_handlers
+import summon_handlers
 
 try:
     from protocol_schema import proto_name
@@ -73,41 +80,9 @@ def _name(proto: int, direction: str) -> str:
         return str(proto)
 
 
-def encode_playerinfo(state: dict) -> bytes:
-    body = b""
-    body += enc_varint_field(1, int(state["pid"]))
-    body += enc_string_field(2, state.get("name", "Shido"))
-    body += enc_varint_field(3, int(state.get("lvl", 1)))
-    body += enc_varint_field(4, int(state.get("exp", 0)))
-    body += enc_varint_field(5, int(state.get("vip_lvl", 0)))
-    body += enc_varint_field(6, int(state.get("vip_exp", 0)))
-    body += enc_varint_field(7, int(state.get("language", 1)))
-    body += enc_string_field(8, state.get("remark", ""))
-    body += enc_varint_field(9, int(state.get("helpFightHeroCid", 0)))
-    for attr in state.get("attr", []) or []:
-        if not isinstance(attr, dict):
-            continue
-        sub = enc_varint_field(1, int(attr.get("type", 0)))
-        sub += enc_varint_field(2, int(attr.get("val", 0)))
-        body += enc_msg_field(10, sub)
-    body += enc_bool_field(11, bool(state.get("isFirstLogin", False)))
-    body += enc_string_field(12, state.get("clientDiscreteData", "{}"))
-    body += enc_string_field(13, state.get("settings", ""))
-    for value in state.get("recoverTimeList", []) or []:
-        body += enc_varint_field(14, int(value))
-    body += enc_varint_field(15, int(state.get("portraitCid", 0)))
-    body += enc_varint_field(16, int(state.get("portraitFrameCid", 0)))
-    body += enc_varint_field(18, int(state.get("unionId", 0)))
-    body += enc_string_field(19, state.get("unionName", ""))
-    body += enc_varint_field(20, int(state.get("titleId", 0)))
-    body += enc_varint_field(21, int(state.get("createTime", int(time.time()))))
-    body += enc_varint_field(22, int(state.get("famousExp", 0)))
-    return body
-
-
 def encode_enter_suc(state: dict) -> bytes:
     body = enc_varint_field(1, int(time.time()))
-    body += enc_msg_field(2, encode_playerinfo(state))
+    body += enc_msg_field(2, encode_player_info(state))
     body += enc_varint_field(3, 0)
     body += enc_varint_field(4, 0)
     return body
@@ -179,6 +154,36 @@ class Client(threading.Thread):
             self.send_pkt(LOGIN_SERVER_TIME, enc_varint_field(1, int(time.time())))
             return
         try:
+            if player_handlers.dispatch(self, proto, body):
+                log(f"   player handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! player {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
+            if role_handlers.dispatch(self, proto, body):
+                log(f"   role handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! role {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
+            if city_dating_handlers.dispatch(self, proto, body):
+                log(f"   city-dating handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! city-dating {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
+            if dating_handlers.dispatch(self, proto, body):
+                log(f"   dating handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! dating {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
+            if dungeon_handlers.dispatch(self, proto, body):
+                log(f"   dungeon handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! dungeon {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if combat_handlers.dispatch(self, proto, body):
                 log(f"   combat handled {_name(proto, 'c2s')}")
                 return
@@ -209,6 +214,12 @@ class Client(threading.Thread):
         except Exception as exc:
             log(f"!! progression {_name(proto, 'c2s')} failed: {exc!r}")
         try:
+            if summon_handlers.dispatch(self, proto, body):
+                log(f"   summon handled {_name(proto, 'c2s')}")
+                return
+        except Exception as exc:
+            log(f"!! summon {_name(proto, 'c2s')} failed: {exc!r}")
+        try:
             if sign_handlers.dispatch(self, proto, body):
                 log(f"   sign handled {_name(proto, 'c2s')}")
                 return
@@ -221,6 +232,11 @@ class Client(threading.Thread):
         except Exception as exc:
             log(f"!! stateful {_name(proto, 'c2s')} failed: {exc!r}")
         if proto in MINIMAL:
+            # No stateful owner: the client gets a descriptor-shaped body of
+            # zeros. That is fine for live-service modules we do not model, and
+            # it is exactly where a stuck feature will be - so mark it, and let
+            # coverage_report.py list them from the trace.
+            log(f"   generic {_name(proto, 'c2s')}")
             self.send_pkt(proto, MINIMAL[proto])
         else:
             log(f"   no s2c descriptor for {_name(proto, 'c2s')}; no reply")
@@ -280,11 +296,17 @@ def main() -> None:
     handled = (
         len(stateful_handlers.STATEFUL_PROTOCOLS)
         + len(combat_handlers.COMBAT_PROTOCOLS)
+        + len(dungeon_handlers.DUNGEON_PROTOCOLS)
+        + len(dating_handlers.DATING_PROTOCOLS)
+        + len(city_dating_handlers.CITY_DATING_PROTOCOLS)
+        + len(role_handlers.ROLE_PROTOCOLS)
+        + len(player_handlers.PLAYER_PROTOCOLS)
         + len(formation_backup_handlers.FORMATION_BACKUP_PROTOCOLS)
         + len(hero_progression_handlers.HERO_PROGRESSION_PROTOCOLS)
         + len(angel_handlers.ANGEL_PROTOCOLS)
         + len(progression_handlers.PROGRESSION_PROTOCOLS)
         + len(sign_handlers.SIGN_PROTOCOLS)
+        + len(summon_handlers.SUMMON_PROTOCOLS)
     )
     log(f"game TCP :{PORT} (plain wire, head token {HEAD_TOKEN:#06x}, stateful={handled})")
     while True:

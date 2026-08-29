@@ -163,3 +163,55 @@ def grant_rewards(state: dict[str, Any], rewards: Iterable[dict[str, Any]], mult
     for reward in normalized:
         add_item(state, reward["id"], reward["num"])
     return deepcopy(normalized)
+
+def _equipments(state: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = state.setdefault("equipments", [])
+    if not isinstance(raw, list):
+        state["equipments"] = raw = []
+    return raw
+
+
+def add_equipment(state: dict[str, Any], cid: int, num: int,
+                  config: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Stock an owned equipment instance.
+
+    Equipment is not an item: `GoodsDataMgr` routes s2c 515's `equipments` list
+    through `__equipmentHandle`, a separate store from `items`. Dropping an
+    equipment cid into the bag instead would show a phantom item and leave the
+    equipment screen empty.
+    """
+    cid, num = int(cid), max(1, int(num))
+    rows = _equipments(state)
+    stackable = bool((config or {}).get("pileUp"))
+    if stackable:
+        for row in rows:
+            if int(row.get("cid", 0) or 0) == cid:
+                grid_max = int((config or {}).get("gridMax", 0) or 0)
+                total = int(row.get("num", 0) or 0) + num
+                row["num"] = min(total, grid_max) if grid_max > 0 else total
+                return row
+    index = 1
+    taken = {str(row.get("id", "")) for row in rows}
+    while f"local-eq-{cid}-{index}" in taken:
+        index += 1
+    row = {
+        "ct": 0,
+        "id": f"local-eq-{cid}-{index}",
+        "cid": cid,
+        "level": 1,
+        "exp": 0,
+        "heroId": "",
+        "position": 0,
+        "attrs": [],
+        "oldAttrIndex": 0,
+        "newAttrType": 0,
+        "newAttrValue": 0,
+        "outTime": 0,
+        "isLock": False,
+        "star": max(0, int((config or {}).get("star", 0) or 0)),
+        "stage": 0,
+        "num": num,
+        "step": 0,
+    }
+    rows.append(row)
+    return row

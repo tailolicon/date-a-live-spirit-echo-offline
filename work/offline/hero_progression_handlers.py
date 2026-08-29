@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from game_static_config import GameStaticConfig, StaticConfigUnavailable, config as static_config
+from hero_stats import battle_attributes
 from player_save import save as persist
 from protocol_schema import decode_request, encode_response
 from state_transactions import consume_cids
@@ -81,7 +82,7 @@ def _wire_hero(hero: dict[str, Any], cfg: GameStaticConfig) -> dict[str, Any]:
         "cid": cid,
         "lvl": max(1, _as_int(hero.get("lvl"), 1)),
         "exp": max(0, _as_int(hero.get("exp"))),
-        "attr": hero.get("attr", []) if isinstance(hero.get("attr", []), list) else [],
+        "attr": battle_attributes(hero, cfg),
         "advancedLvl": max(0, _as_int(hero.get("advancedLvl"))),
         "equipments": hero.get("equipments", []) if isinstance(hero.get("equipments", []), list) else [],
         "helpFight": bool(hero.get("helpFight", False)),

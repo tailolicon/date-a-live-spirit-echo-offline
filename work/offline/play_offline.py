@@ -116,7 +116,9 @@ def main() -> int:
     port_free(HTTP_PORT)
     port_free(GAME_PORT)
     procs = [spawn("http_server.py", "http.out"),
-             spawn("tcp_server_main_scene.py", "tcp.out")]
+             spawn("tcp_server_main_scene.py", "tcp.out"),
+             # The client swallows its own Lua errors; this makes them visible.
+             spawn("lua_watch.py", "lua_errors.out")]
     time.sleep(1.5)
     for name, port in (("HTTP", HTTP_PORT), ("game TCP", GAME_PORT)):
         if not port_alive(port):
@@ -130,6 +132,8 @@ def main() -> int:
     print(f"READY - keep this window open. Logs: work/offline/logs/")
     print(f"        HTTP :{HTTP_PORT}   GAME-TCP :{GAME_PORT}")
     print(f"        save: work/offline/saves/player.json")
+    print(f"        client lua errors: logs/lua_errors.log")
+    print(f"        protocol coverage: python work/offline/coverage_report.py")
     try:
         while True:
             time.sleep(5)

@@ -53,10 +53,21 @@ class ProtocolSchemaTests(unittest.TestCase):
         body = encode_fields(self.registry.c2s[264], request)
         self.assertEqual(self.registry.decode_request(264, body), request)
 
-    def test_non_repeated_nested_message_is_present(self) -> None:
-        body = self.registry.encode_response(1795, {})
+    def test_a_supplied_nested_message_is_emitted_at_its_own_tag(self) -> None:
+        body = self.registry.encode_response(1795, {"group": {"id": "g", "cid": 7}})
         self.assertTrue(body)
         self.assertEqual(body[0] >> 3, 1)
+        self.assertEqual(decode_fields(self.registry.s2c[1795], body)["group"]["cid"], 7)
+
+    def test_an_unsupplied_nested_message_is_absent(self) -> None:
+        """Absent, not zero-filled: the client tells the two apart.
+
+        NetOP:UnpackSingleVaule leaves an unmatched field as NULL -> nil, which
+        every `if data.x then` guard reads as "no value". A submessage emitted
+        with default contents is instead a table full of zeros, and the ids in
+        it get looked up in static tables that have no row 0.
+        """
+        self.assertEqual(self.registry.encode_response(1795, {}), b"")
 
 
 class PlayerSaveMigrationTests(unittest.TestCase):
@@ -66,18 +77,40 @@ class PlayerSaveMigrationTests(unittest.TestCase):
         self.assertIn(player_save.FIRST_PLOT_LEVEL, state["passedLevels"])
         self.assertEqual({f["type"] for f in state["formations"]}, {1, 2, 3})
         by_cid = {item["cid"]: item for item in state["items"].values()}
-        self.assertEqual(by_cid[player_save.GOLD_CID]["num"], 123)
-        self.assertEqual(by_cid[player_save.DIAMOND_CID]["num"], 456)
+        # A legacy gold/diamond field is still read across, then the stocked
+        # float is applied on top of it - never below what the save held.
+        self.assertGreaterEqual(by_cid[player_save.GOLD_CID]["num"], 123)
+        self.assertGreaterEqual(by_cid[player_save.DIAMOND_CID]["num"], 456)
         self.assertGreater(by_cid[player_save.POWER_CID]["num"], 0)
 
-    def test_existing_item_quantity_is_not_clobbered(self) -> None:
+    def test_a_non_currency_item_quantity_is_not_clobbered(self) -> None:
+        """Stocking is for the currencies only; drops and materials are state."""
+        material = 510105
+        self.assertNotIn(material, player_save.STOCKED_CIDS)
         state = player_save.normalize_save({
-            "items": {"500001": {"ct": 0, "id": "500001", "cid": 500001, "num": 7}},
+            "items": {str(material): {"ct": 0, "id": str(material), "cid": material, "num": 7}},
             "passedLevels": [101102],
         })
-        self.assertEqual(state["items"]["500001"]["num"], 7)
-        self.assertEqual(state["gold"], 7)
+        self.assertEqual(state["items"][str(material)]["num"], 7)
         self.assertEqual(state["passedLevels"][:2], [player_save.FIRST_PLOT_LEVEL, 101102])
+
+    def test_stocking_never_lowers_a_richer_balance(self) -> None:
+        rich = player_save.TEST_CURRENCY_STOCK * 3
+        state = player_save.normalize_save({
+            "items": {"500001": {"ct": 0, "id": "500001", "cid": 500001, "num": rich}},
+        })
+        self.assertEqual(state["items"]["500001"]["num"], rich)
+        self.assertEqual(state["gold"], rich)
+
+    def test_stocking_runs_once(self) -> None:
+        """The float is a migration, not a standing refill of every save."""
+        state = player_save.normalize_save({"items": {}})
+        spent = next(row for row in state["items"].values()
+                     if int(row["cid"]) == player_save.GOLD_CID)
+        spent["num"] = 12
+        again = player_save.normalize_save(state)
+        by_cid = {int(row["cid"]): row for row in again["items"].values()}
+        self.assertEqual(by_cid[player_save.GOLD_CID]["num"], 12)
 
     def test_save_load_is_atomic_and_migrated(self) -> None:
         old_path = player_save.SAVE_PATH

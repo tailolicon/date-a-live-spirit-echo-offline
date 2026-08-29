@@ -12,8 +12,9 @@ import time
 from typing import Any
 
 import game_static_config
+from hero_stats import battle_attributes
 from player_save import FIRST_PLOT_LEVEL, save as persist
-from proto_codec import enc_bool_field, enc_msg_field, enc_varint_field
+from proto_codec import enc_bool_field, enc_msg_field, enc_varint_field, uvarint
 from protocol_schema import decode_request, encode_response
 from state_transactions import consume_cids, consume_items, grant_rewards, normalize_rewards
 
@@ -73,9 +74,19 @@ def inventory_records(state: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def equipment_records(state: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = state.get("equipments", [])
+    return [deepcopy(v) for v in raw if isinstance(v, dict)] if isinstance(raw, list) else []
+
+
 def hero_records(state: dict[str, Any]) -> list[dict[str, Any]]:
     raw = state.get("heroes", [])
-    return [deepcopy(v) for v in raw if isinstance(v, dict)] if isinstance(raw, list) else []
+    rows = [deepcopy(v) for v in raw if isinstance(v, dict)] if isinstance(raw, list) else []
+    for hero in rows:
+        # The save keeps progression (level/quality/advance); the stats those
+        # imply are derived here so a level-up cannot leave them stale.
+        hero["attr"] = battle_attributes(hero)
+    return rows
 
 
 def formation_records(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -83,21 +94,65 @@ def formation_records(state: dict[str, Any]) -> list[dict[str, Any]]:
     return [deepcopy(v) for v in raw if isinstance(v, dict)] if isinstance(raw, list) else []
 
 
-def encode_dungeon_level_info(state: dict[str, Any]) -> bytes:
-    passed = state.get("passedLevels") or [FIRST_PLOT_LEVEL]
-    records = bytearray()
-    for raw_cid in passed:
+def _level_info_rows(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """One levelInfo per stage the save knows about, newest state winning.
+
+    `levelStates` is what the combat lifecycle actually maintains - fight
+    counts and the star goals a clear ticked off - so it has to be the source
+    here. Rebuilding the list from `passedLevels` alone reports every stage as
+    a bare one-fight win, which is why cleared stages came back from a relog
+    with their stars reset.
+    """
+    rows: dict[int, dict[str, Any]] = {}
+    for raw_cid in state.get("passedLevels") or []:
         try:
             cid = int(raw_cid)
         except (TypeError, ValueError):
             continue
-        if cid <= 0:
-            continue
-        info = enc_varint_field(1, cid)
-        info += enc_varint_field(3, 1)
-        info += enc_bool_field(4, True)
-        info += enc_varint_field(5, 0)
-        info += enc_varint_field(6, 0)
+        if cid > 0:
+            rows[cid] = {"cid": cid, "goals": [], "fightCount": 1, "win": True,
+                         "buyCount": 0, "freeCount": 0}
+    raw_states = state.get("levelStates")
+    if isinstance(raw_states, dict):
+        for key, row in raw_states.items():
+            if not isinstance(row, dict):
+                continue
+            try:
+                cid = int(row.get("cid", key))
+            except (TypeError, ValueError):
+                continue
+            if cid <= 0:
+                continue
+            goals: list[int] = []
+            for value in row.get("goals") or []:
+                try:
+                    goal = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if goal > 0 and goal not in goals:
+                    goals.append(goal)
+            rows[cid] = {
+                "cid": cid,
+                "goals": goals,
+                "fightCount": max(0, int(row.get("fightCount", 0) or 0)),
+                "win": bool(row.get("win", False)),
+                "buyCount": max(0, int(row.get("buyCount", 0) or 0)),
+                "freeCount": max(0, int(row.get("freeCount", 0) or 0)),
+            }
+    return [rows[cid] for cid in sorted(rows)]
+
+
+def encode_dungeon_level_info(state: dict[str, Any]) -> bytes:
+    records = bytearray()
+    for row in _level_info_rows(state):
+        info = enc_varint_field(1, row["cid"])
+        if row["goals"]:
+            packed = b"".join(uvarint(goal) for goal in row["goals"])
+            info += enc_msg_field(2, packed)
+        info += enc_varint_field(3, row["fightCount"])
+        info += enc_bool_field(4, row["win"])
+        info += enc_varint_field(5, row["buyCount"])
+        info += enc_varint_field(6, row["freeCount"])
         records += enc_msg_field(1, info)
     if not records:
         return encode_dungeon_level_info({"passedLevels": [FIRST_PLOT_LEVEL]})
@@ -316,8 +371,26 @@ def _task_submit_list(state: dict[str, Any], request: dict[str, Any]) -> tuple[d
 
 
 def _stores(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """The shop the client sees: the shipped catalogue, save rows layered on.
+
+    `StoreDataMgr` keeps no fallback of its own - `commodityMap_` is built from
+    this reply and nothing else - so the catalogue has to come from the server
+    even though every price in it is static data the client already ships.
+    """
     rows = state.get("stores", [])
-    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    overrides = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    try:
+        catalogue = [deepcopy(store) for store in game_static_config.config().store_catalogue()]
+    except game_static_config.StaticConfigUnavailable:
+        return overrides
+    by_id = {int(store.get("storeId", 0) or 0): store for store in catalogue}
+    for override in overrides:
+        store_id = int(override.get("storeId", 0) or 0)
+        if store_id in by_id:
+            by_id[store_id].update(override)
+        else:
+            by_id[store_id] = override
+    return [by_id[key] for key in sorted(by_id)]
 
 
 def _find_store(state: dict[str, Any], store_id: int) -> dict[str, Any] | None:
@@ -490,7 +563,10 @@ def _seven_carnival(state: dict[str, Any]) -> dict[str, Any]:
 
 def response_for(proto: int, state: dict[str, Any], body: bytes = b"") -> tuple[bytes, bool] | None:
     if proto == ITEM_GET_ITEMS:
-        return encode_response(proto, {"items": inventory_records(state)}), False
+        return encode_response(proto, {
+            "items": inventory_records(state),
+            "equipments": equipment_records(state),
+        }), False
     if proto == ITEM_USE_ITEM:
         rewards, changed = _item_use(state, decode_request(proto, body))
         return encode_response(proto, {"items": rewards}), changed

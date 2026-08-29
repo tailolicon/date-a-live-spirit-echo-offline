@@ -27,6 +27,10 @@ from stateful_handlers import encode_dungeon_level_info  # noqa: E402
 HANDLER_MODULES = (
     "stateful_handlers",
     "combat_handlers",
+    "dungeon_handlers",
+    "dating_handlers",
+    "city_dating_handlers",
+    "role_handlers",
     "formation_backup_handlers",
     "hero_progression_handlers",
     "angel_handlers",

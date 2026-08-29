@@ -1,0 +1,355 @@
+{
+  "schemaVersion": 5,
+  "pid": 10001,
+  "name": "Shido",
+  "lvl": 3,
+  "exp": 0,
+  "vip_lvl": 0,
+  "vip_exp": 0,
+  "language": 1,
+  "remark": "",
+  "helpFightHeroCid": 110101,
+  "attr": [],
+  "isFirstLogin": false,
+  "clientDiscreteData": "{}",
+  "settings": "",
+  "recoverTimeList": [],
+  "portraitCid": 0,
+  "portraitFrameCid": 0,
+  "unionId": 0,
+  "unionName": "",
+  "titleId": 0,
+  "createTime": 1756100000,
+  "famousExp": 0,
+  "serverId": 101001,
+  "group_id": 101,
+  "groupName": "Local",
+  "token": "offline_local_token",
+  "hasRole": true,
+  "account": "offline",
+  "password": "",
+  "items": {
+    "500001": {
+      "ct": 0,
+      "id": "500001",
+      "cid": 500001,
+      "num": 1000120,
+      "outTime": 0
+    },
+    "500002": {
+      "ct": 0,
+      "id": "500002",
+      "cid": 500002,
+      "num": 10000,
+      "outTime": 0
+    },
+    "500003": {
+      "ct": 0,
+      "id": "500003",
+      "cid": 500003,
+      "num": 10000,
+      "outTime": 0
+    },
+    "500004": {
+      "ct": 0,
+      "id": "500004",
+      "cid": 500004,
+      "num": 975,
+      "outTime": 0
+    },
+    "500006": {
+      "ct": 0,
+      "id": "500006",
+      "cid": 500006,
+      "num": 40,
+      "outTime": 0
+    },
+    "500016": {
+      "ct": 0,
+      "id": "500016",
+      "cid": 500016,
+      "num": 2,
+      "outTime": 0
+    },
+    "510201": {
+      "ct": 0,
+      "id": "510201",
+      "cid": 510201,
+      "num": 2,
+      "outTime": 0
+    },
+    "500014": {
+      "ct": 0,
+      "id": "500014",
+      "cid": 500014,
+      "num": 1000,
+      "outTime": 0
+    },
+    "500017": {
+      "ct": 0,
+      "id": "500017",
+      "cid": 500017,
+      "num": 100000,
+      "outTime": 0
+    },
+    "500018": {
+      "ct": 0,
+      "id": "500018",
+      "cid": 500018,
+      "num": 100000,
+      "outTime": 0
+    },
+    "500024": {
+      "ct": 0,
+      "id": "500024",
+      "cid": 500024,
+      "num": 1000,
+      "outTime": 0
+    },
+    "500025": {
+      "ct": 0,
+      "id": "500025",
+      "cid": 500025,
+      "num": 1000,
+      "outTime": 0
+    },
+    "500030": {
+      "ct": 0,
+      "id": "500030",
+      "cid": 500030,
+      "num": 100,
+      "outTime": 0
+    },
+    "500096": {
+      "ct": 0,
+      "id": "500096",
+      "cid": 500096,
+      "num": 100000,
+      "outTime": 0
+    },
+    "570101": {
+      "ct": 0,
+      "id": "570101",
+      "cid": 570101,
+      "num": 1000,
+      "outTime": 0
+    },
+    "566058": {
+      "ct": 0,
+      "id": "566058",
+      "cid": 566058,
+      "num": 100,
+      "outTime": 0
+    },
+    "570033": {
+      "ct": 0,
+      "id": "570033",
+      "cid": 570033,
+      "num": 1000,
+      "outTime": 0
+    },
+    "570035": {
+      "ct": 0,
+      "id": "570035",
+      "cid": 570035,
+      "num": 1000,
+      "outTime": 0
+    },
+    "570150": {
+      "ct": 0,
+      "id": "570150",
+      "cid": 570150,
+      "num": 500,
+      "outTime": 0
+    }
+  },
+  "heroes": [
+    {
+      "ct": 0,
+      "id": "local-110101-1",
+      "cid": 110101,
+      "lvl": 1,
+      "exp": 0,
+      "attr": [],
+      "advancedLvl": 0,
+      "equipments": [],
+      "helpFight": false,
+      "angelLvl": 1,
+      "angeSkillInfos": [],
+      "useSkillPiont": 0,
+      "quality": 4,
+      "provide": 0,
+      "fightPower": 0,
+      "skinCid": 1101011,
+      "skillStrategyInfo": [
+        {
+          "id": 1,
+          "name": "Default",
+          "alreadyUseSkillPiont": 0,
+          "angeSkillInfos": [],
+          "passiveSkillInfo": []
+        }
+      ],
+      "useSkillStrategy": 1,
+      "crystalInfo": [],
+      "equipSkillIds": [],
+      "euqipFetterInfo": [],
+      "heroStatus": 1,
+      "deadLine": 0,
+      "gemInfos": [],
+      "skinCidTemp": 0,
+      "exploreTreasureSkill": [],
+      "breakLv": 0,
+      "angelStrengthen": []
+    }
+  ],
+  "equipments": [],
+  "formations": [
+    {
+      "ct": 0,
+      "type": 1,
+      "status": 1,
+      "stance": [
+        "local-110101-1"
+      ]
+    },
+    {
+      "ct": 0,
+      "type": 2,
+      "status": 1,
+      "stance": []
+    },
+    {
+      "ct": 0,
+      "type": 3,
+      "status": 1,
+      "stance": []
+    }
+  ],
+  "passedLevels": [
+    101101,
+    101102,
+    101103
+  ],
+  "mails": [],
+  "tasks": [],
+  "friends": [],
+  "storePurchases": {},
+  "gold": 1000120,
+  "diamonds": 10000,
+  "updated": 1787760364,
+  "spiritInfo": {
+    "spiritPoints": 0,
+    "grade": 0,
+    "level": 1,
+    "exp": 0,
+    "specialism": [],
+    "firstShow": false,
+    "feedback": false,
+    "angleSpirits": [],
+    "maxLv": 1
+  },
+  "signInfos": [
+    {
+      "id": 1,
+      "index": 0,
+      "extendData": "",
+      "awardType": [
+        2
+      ],
+      "supplyLimit": 0,
+      "supplyDays": []
+    },
+    {
+      "id": 2,
+      "index": 0,
+      "extendData": "",
+      "awardType": [
+        2
+      ],
+      "supplyLimit": 0,
+      "supplyDays": []
+    },
+    {
+      "id": 3,
+      "index": 0,
+      "extendData": "",
+      "awardType": [
+        2
+      ],
+      "supplyLimit": 0,
+      "supplyDays": []
+    },
+    {
+      "id": 4,
+      "index": 0,
+      "extendData": "",
+      "awardType": [
+        2
+      ],
+      "supplyLimit": 0,
+      "supplyDays": []
+    }
+  ],
+  "fightSequence": 15,
+  "levelStates": {
+    "101101": {
+      "cid": 101101,
+      "goals": [
+        1,
+        2,
+        3
+      ],
+      "fightCount": 2,
+      "win": true,
+      "buyCount": 0,
+      "freeCount": 0
+    },
+    "101102": {
+      "cid": 101102,
+      "goals": [
+        1
+      ],
+      "fightCount": 2,
+      "win": true,
+      "buyCount": 0,
+      "freeCount": 0
+    },
+    "101103": {
+      "cid": 101103,
+      "goals": [
+        1
+      ],
+      "fightCount": 2,
+      "win": true,
+      "buyCount": 0,
+      "freeCount": 0
+    }
+  },
+  "mainLineCid": 101104,
+  "lastFightResult": {
+    "fightId": "offline-101103-15",
+    "levelCid": 101103,
+    "settledAt": 1787759595,
+    "response": {
+      "levelInfo": {
+        "cid": 101103,
+        "goals": [
+          1
+        ],
+        "fightCount": 2,
+        "win": true,
+        "buyCount": 0,
+        "freeCount": 0
+      },
+      "rewards": [],
+      "win": true,
+      "additionAward": [],
+      "original": []
+    }
+  },
+  "datingScriptsSeen": [
+    1001,
+    1002
+  ]
+}
